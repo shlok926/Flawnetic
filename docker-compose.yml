@@ -1,0 +1,61 @@
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: flawnetic
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: flawnetic_db
+    ports: ["5434:5432"]
+    volumes: [postgres_data:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U flawnetic -d flawnetic_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    ports: ["6380:6379"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  minio:
+    image: minio/minio
+    ports: ["9000:9000", "9001:9001"]
+    environment:
+      MINIO_ROOT_USER: ${S3_ACCESS_KEY}
+      MINIO_ROOT_PASSWORD: ${S3_SECRET_KEY}
+    command: server /data --console-address ":9001"
+    volumes: [minio_data:/data]
+
+  zap:
+    image: softwaresecurityproject/zap2docker-stable
+    ports: ["8090:8090"]
+    command: zap.sh -daemon -host 0.0.0.0 -port 8090 -config api.key=${ZAP_API_KEY} -config api.addrs.addr.name=.* -config api.addrs.addr.regex=true
+    profiles: ["security"]
+
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports: ["8000:8000"]
+    env_file: .env
+    depends_on: [postgres, redis]
+    command: uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
+    volumes: [./backend:/app]
+
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    env_file: .env
+    depends_on: [postgres, redis, minio]
+    command: celery -A workers.celery_app worker --loglevel=info
+    volumes: [./backend:/app]
+
+volumes:
+  postgres_data:
+  minio_data:
