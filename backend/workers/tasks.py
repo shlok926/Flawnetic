@@ -10,6 +10,7 @@ from engines.functional.engine import FunctionalEngine
 from engines.security.engine import SecurityEngine
 from engines.accessibility.engine import AccessibilityEngine
 from engines.usability.engine import UsabilityEngine
+from engines.visual.engine import VisualEngine
 from engines.ai.analyzer import AIAnalyzer
 from report.generator import PDFReportGenerator
 import asyncio
@@ -169,6 +170,31 @@ def run_scan(scan_run_id: str):
                         scan_run_id=scan_run.id,
                         page_id=p.id,
                         module=ModuleEnum.usability,
+                        title=res["title"],
+                        description=res["description"],
+                        steps_to_reproduce=res.get("steps_to_reproduce"),
+                        severity=getattr(SeverityEnum, res["severity"]),
+                        priority=getattr(PriorityEnum, res["priority"]),
+                        root_cause_hint=ai_hint
+                    )
+                    db.add(new_finding)
+            db.commit()
+
+        if "visual" in modules_to_run:
+            visual_engine = VisualEngine(headless=True)
+            for p in pages_to_test:
+                visual_results = asyncio.run(visual_engine.audit_visual_rendering(p.url))
+                for res in visual_results:
+                    ai_hint = asyncio.run(ai_analyzer.analyze_finding(
+                        title=res["title"],
+                        description=res["description"],
+                        steps=res.get("steps_to_reproduce", {})
+                    ))
+                    new_finding = Finding(
+                        id=uuid.uuid4(),
+                        scan_run_id=scan_run.id,
+                        page_id=p.id,
+                        module=ModuleEnum.visual,
                         title=res["title"],
                         description=res["description"],
                         steps_to_reproduce=res.get("steps_to_reproduce"),
