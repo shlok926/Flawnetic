@@ -8,6 +8,8 @@ from models.db import ScanRun, ScanStatusEnum, Project, Page, Finding, ModuleEnu
 from engines.crawler.crawler import FlawneticCrawler
 from engines.functional.engine import FunctionalEngine
 from engines.security.engine import SecurityEngine
+from engines.accessibility.engine import AccessibilityEngine
+from engines.usability.engine import UsabilityEngine
 from engines.ai.analyzer import AIAnalyzer
 from report.generator import PDFReportGenerator
 import asyncio
@@ -72,7 +74,7 @@ def run_scan(scan_run_id: str):
         scan_run.status = ScanStatusEnum.testing
         db.commit()
         
-        modules_to_run = config.get("modules", ["functional", "security"])
+        modules_to_run = config.get("modules", ["functional", "security", "accessibility", "usability"])
         ai_analyzer = AIAnalyzer()
         pages_to_test = db.query(Page).filter(Page.scan_run_id == scan_run.id).all()
         
@@ -117,6 +119,56 @@ def run_scan(scan_run_id: str):
                         scan_run_id=scan_run.id,
                         page_id=p.id,
                         module=ModuleEnum.security,
+                        title=res["title"],
+                        description=res["description"],
+                        steps_to_reproduce=res.get("steps_to_reproduce"),
+                        severity=getattr(SeverityEnum, res["severity"]),
+                        priority=getattr(PriorityEnum, res["priority"]),
+                        root_cause_hint=ai_hint
+                    )
+                    db.add(new_finding)
+            db.commit()
+
+        if "accessibility" in modules_to_run:
+            a11y_engine = AccessibilityEngine(headless=True)
+            for p in pages_to_test:
+                a11y_results = asyncio.run(a11y_engine.scan_page(p.url))
+                for res in a11y_results:
+                    ai_hint = asyncio.run(ai_analyzer.analyze_finding(
+                        title=res["title"],
+                        description=res["description"],
+                        steps=res.get("steps_to_reproduce", {})
+                    ))
+                    new_finding = Finding(
+                        id=uuid.uuid4(),
+                        scan_run_id=scan_run.id,
+                        page_id=p.id,
+                        module=ModuleEnum.accessibility,
+                        title=res["title"],
+                        description=res["description"],
+                        steps_to_reproduce=res.get("steps_to_reproduce"),
+                        severity=getattr(SeverityEnum, res["severity"]),
+                        priority=getattr(PriorityEnum, res["priority"]),
+                        root_cause_hint=ai_hint
+                    )
+                    db.add(new_finding)
+            db.commit()
+
+        if "usability" in modules_to_run:
+            usability_engine = UsabilityEngine(headless=True)
+            for p in pages_to_test:
+                usability_results = asyncio.run(usability_engine.analyze_page(p.url))
+                for res in usability_results:
+                    ai_hint = asyncio.run(ai_analyzer.analyze_finding(
+                        title=res["title"],
+                        description=res["description"],
+                        steps=res.get("steps_to_reproduce", {})
+                    ))
+                    new_finding = Finding(
+                        id=uuid.uuid4(),
+                        scan_run_id=scan_run.id,
+                        page_id=p.id,
+                        module=ModuleEnum.usability,
                         title=res["title"],
                         description=res["description"],
                         steps_to_reproduce=res.get("steps_to_reproduce"),
