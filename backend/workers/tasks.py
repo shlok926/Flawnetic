@@ -7,6 +7,7 @@ from config.settings import settings
 from models.db import ScanRun, ScanStatusEnum, Project, Page, Finding, ModuleEnum, SeverityEnum, PriorityEnum, Report
 from engines.crawler.crawler import FlawneticCrawler
 from engines.functional.engine import FunctionalEngine
+from engines.security.engine import SecurityEngine
 from engines.ai.analyzer import AIAnalyzer
 from report.generator import PDFReportGenerator
 import asyncio
@@ -71,18 +72,15 @@ def run_scan(scan_run_id: str):
         scan_run.status = ScanStatusEnum.testing
         db.commit()
         
-        modules_to_run = config.get("modules", [])
+        modules_to_run = config.get("modules", ["functional", "security"])
+        ai_analyzer = AIAnalyzer()
+        pages_to_test = db.query(Page).filter(Page.scan_run_id == scan_run.id).all()
         
         if "functional" in modules_to_run:
             functional_engine = FunctionalEngine(headless=True)
-            ai_analyzer = AIAnalyzer()
-            pages_to_test = db.query(Page).filter(Page.scan_run_id == scan_run.id).all()
-            
             for p in pages_to_test:
                 results = asyncio.run(functional_engine.analyze_and_test(p.url))
-                
                 for res in results:
-                    # AI Remediation Enrichment
                     ai_hint = asyncio.run(ai_analyzer.analyze_finding(
                         title=res["title"],
                         description=res["description"],
@@ -94,6 +92,31 @@ def run_scan(scan_run_id: str):
                         scan_run_id=scan_run.id,
                         page_id=p.id,
                         module=ModuleEnum.functional,
+                        title=res["title"],
+                        description=res["description"],
+                        steps_to_reproduce=res.get("steps_to_reproduce"),
+                        severity=getattr(SeverityEnum, res["severity"]),
+                        priority=getattr(PriorityEnum, res["priority"]),
+                        root_cause_hint=ai_hint
+                    )
+                    db.add(new_finding)
+            db.commit()
+
+        if "security" in modules_to_run:
+            security_engine = SecurityEngine(zap_base_url=settings.zap_base_url, zap_api_key=settings.zap_api_key)
+            for p in pages_to_test:
+                sec_results = asyncio.run(security_engine.run_zap_dast_scan(p.url))
+                for res in sec_results:
+                    ai_hint = asyncio.run(ai_analyzer.analyze_finding(
+                        title=res["title"],
+                        description=res["description"],
+                        steps=res.get("steps_to_reproduce", {})
+                    ))
+                    new_finding = Finding(
+                        id=uuid.uuid4(),
+                        scan_run_id=scan_run.id,
+                        page_id=p.id,
+                        module=ModuleEnum.security,
                         title=res["title"],
                         description=res["description"],
                         steps_to_reproduce=res.get("steps_to_reproduce"),
