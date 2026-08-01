@@ -77,20 +77,33 @@ def run_scan(scan_run_id: str):
         db.commit()
         
         modules_to_run = config.get("modules", ["functional", "security", "accessibility", "usability"])
-        ai_analyzer = AIAnalyzer()
+        try:
+            ai_analyzer = AIAnalyzer()
+        except Exception:
+            ai_analyzer = None
+
         pages_to_test = db.query(Page).filter(Page.scan_run_id == scan_run.id).all()
         
-        if "functional" in modules_to_run:
-            functional_engine = FunctionalEngine(headless=True)
-            for p in pages_to_test:
-                results = asyncio.run(functional_engine.analyze_and_test(p.url))
-                for res in results:
+        def get_ai_hint(res):
+            ai_hint = None
+            if ai_analyzer and getattr(settings, 'anthropic_api_key', None) and settings.anthropic_api_key != "your-anthropic-api-key":
+                try:
                     ai_hint = asyncio.run(ai_analyzer.analyze_finding(
                         title=res["title"],
                         description=res["description"],
                         steps=res.get("steps_to_reproduce", {})
                     ))
+                except Exception as ai_err:
+                    print(f"[AI WARNING] AI analysis failed: {ai_err}")
+                    ai_hint = None
+            return ai_hint
 
+        if "functional" in modules_to_run:
+            functional_engine = FunctionalEngine(headless=True)
+            for p in pages_to_test:
+                results = asyncio.run(functional_engine.analyze_and_test(p.url))
+                for res in results:
+                    ai_hint = get_ai_hint(res)
                     new_finding = Finding(
                         id=uuid.uuid4(),
                         scan_run_id=scan_run.id,
@@ -111,11 +124,7 @@ def run_scan(scan_run_id: str):
             for p in pages_to_test:
                 sec_results = asyncio.run(security_engine.run_zap_dast_scan(p.url))
                 for res in sec_results:
-                    ai_hint = asyncio.run(ai_analyzer.analyze_finding(
-                        title=res["title"],
-                        description=res["description"],
-                        steps=res.get("steps_to_reproduce", {})
-                    ))
+                    ai_hint = get_ai_hint(res)
                     new_finding = Finding(
                         id=uuid.uuid4(),
                         scan_run_id=scan_run.id,
@@ -136,11 +145,7 @@ def run_scan(scan_run_id: str):
             for p in pages_to_test:
                 a11y_results = asyncio.run(a11y_engine.scan_page(p.url))
                 for res in a11y_results:
-                    ai_hint = asyncio.run(ai_analyzer.analyze_finding(
-                        title=res["title"],
-                        description=res["description"],
-                        steps=res.get("steps_to_reproduce", {})
-                    ))
+                    ai_hint = get_ai_hint(res)
                     new_finding = Finding(
                         id=uuid.uuid4(),
                         scan_run_id=scan_run.id,
@@ -161,11 +166,7 @@ def run_scan(scan_run_id: str):
             for p in pages_to_test:
                 usability_results = asyncio.run(usability_engine.analyze_page(p.url))
                 for res in usability_results:
-                    ai_hint = asyncio.run(ai_analyzer.analyze_finding(
-                        title=res["title"],
-                        description=res["description"],
-                        steps=res.get("steps_to_reproduce", {})
-                    ))
+                    ai_hint = get_ai_hint(res)
                     new_finding = Finding(
                         id=uuid.uuid4(),
                         scan_run_id=scan_run.id,
@@ -186,11 +187,7 @@ def run_scan(scan_run_id: str):
             for p in pages_to_test:
                 visual_results = asyncio.run(visual_engine.audit_visual_rendering(p.url))
                 for res in visual_results:
-                    ai_hint = asyncio.run(ai_analyzer.analyze_finding(
-                        title=res["title"],
-                        description=res["description"],
-                        steps=res.get("steps_to_reproduce", {})
-                    ))
+                    ai_hint = get_ai_hint(res)
                     new_finding = Finding(
                         id=uuid.uuid4(),
                         scan_run_id=scan_run.id,
@@ -248,7 +245,15 @@ def run_scan(scan_run_id: str):
         scan_run.status = ScanStatusEnum.done
         db.commit()
     except Exception as e:
-        scan_run.status = ScanStatusEnum.failed
-        db.commit()
+        import traceback
+        print(f"[SCAN FAILED] scan_run_id={scan_run_id}")
+        print(f"[ERROR] {type(e).__name__}: {e}")
+        print(traceback.format_exc())
+        try:
+            scan_run.status = ScanStatusEnum.failed
+            scan_run.summary = {"error": str(e), "error_type": type(e).__name__}
+            db.commit()
+        except:
+            pass
     finally:
         db.close()
