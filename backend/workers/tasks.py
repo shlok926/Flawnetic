@@ -59,7 +59,8 @@ def run_scan(scan_run_id: str):
         site_graph = asyncio.run(crawler.crawl())
         
         # Save results to DB
-        scan_run.site_graph = site_graph.model_dump()
+        import dataclasses
+        scan_run.site_graph = dataclasses.asdict(site_graph)
         
         for p in site_graph.pages:
             new_page = Page(
@@ -67,7 +68,7 @@ def run_scan(scan_run_id: str):
                 scan_run_id=scan_run.id,
                 url=p.url,
                 title=p.title,
-                http_status=p.status_code,
+                http_status=p.http_status,
                 screenshot_url=p.screenshot_path
             )
             db.add(new_page)
