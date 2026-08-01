@@ -11,6 +11,37 @@ from config.settings import settings
 
 logger = logging.getLogger(__name__)
 
+def clean_text(text: str) -> str:
+    """Replaces Unicode special characters with ASCII equivalents and encodes safely for FPDF Latin-1."""
+    if not text:
+        return ""
+    if not isinstance(text, str):
+        text = str(text)
+
+    replacements = [
+        ('—', '-'),
+        ('–', '-'),
+        ('\u2014', '-'),
+        ('\u2013', '-'),
+        ('\u2018', "'"),
+        ('\u2019', "'"),
+        ('\u201c', '"'),
+        ('\u201d', '"'),
+        ('→', '->'),
+        ('←', '<-'),
+        ('✓', 'OK'),
+        ('✗', 'FAIL'),
+        ('🔴', '[CRITICAL]'),
+        ('🟠', '[HIGH]'),
+        ('🟡', '[MEDIUM]'),
+        ('🔵', '[LOW]'),
+    ]
+    for orig, repl in replacements:
+        text = text.replace(orig, repl)
+
+    return text.encode('latin-1', 'replace').decode('latin-1')
+
+
 class PDFReportGenerator:
     def __init__(self):
         # Connect to MinIO/S3
@@ -114,102 +145,88 @@ class PDFReportGenerator:
         target_url: str,
         total_pages: int = 1
     ) -> str:
-        """Renders HTML template, generates PDF, uploads to MinIO/S3, and returns public URL."""
-        rendered_html = self.render_html_report(scan_run_id, findings, project_name, target_url, total_pages)
+        """Generates PDF report using FPDF2, uploads to MinIO/S3, and returns public URL."""
         pdf_file_name = f"report_{scan_run_id}.pdf"
         local_pdf_path = pdf_file_name
 
-        pdf_generated = False
+        pdf = FPDF()
+        pdf.add_page()
+        
+        # Header Logo & Title
+        pdf.set_font("Arial", 'B', 18)
+        pdf.set_text_color(79, 70, 229)
+        pdf.cell(pdf.epw, 10, clean_text("Flawnetic AI Audit Report"), new_x="LMARGIN", new_y="NEXT", align='C')
+        pdf.set_font("Arial", '', 10)
+        pdf.set_text_color(100, 116, 139)
+        pdf.cell(pdf.epw, 6, clean_text("Autonomous E2E QA & Security Platform"), new_x="LMARGIN", new_y="NEXT", align='C')
+        pdf.ln(8)
 
-        # 1. Try WeasyPrint
-        try:
-            from weasyprint import HTML
-            HTML(string=rendered_html).write_pdf(local_pdf_path)
-            pdf_generated = True
-            logger.info("PDF successfully generated using WeasyPrint.")
-        except Exception as e:
-            logger.warning(f"WeasyPrint PDF rendering unavailable ({e}). Falling back to FPDF engine.")
+        # Metadata Box
+        pdf.set_font("Arial", 'B', 12)
+        pdf.set_text_color(15, 23, 42)
+        pdf.cell(pdf.epw, 8, clean_text(f"Project: {project_name}"), new_x="LMARGIN", new_y="NEXT")
+        pdf.set_font("Arial", '', 10)
+        pdf.cell(pdf.epw, 6, clean_text(f"Target URL: {target_url}"), new_x="LMARGIN", new_y="NEXT")
+        pdf.cell(pdf.epw, 6, clean_text(f"Scan Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')}"), new_x="LMARGIN", new_y="NEXT")
+        pdf.cell(pdf.epw, 6, clean_text(f"Pages Crawled: {total_pages} | Total Findings: {len(findings)}"), new_x="LMARGIN", new_y="NEXT")
+        pdf.ln(8)
 
-        # 2. Fallback to FPDF if WeasyPrint GTK libraries are not installed on host OS
-        if not pdf_generated:
-            pdf = FPDF()
-            pdf.add_page()
-            
-            # Header Logo & Title
-            pdf.set_font("Arial", 'B', 18)
-            pdf.set_text_color(79, 70, 229)
-            pdf.cell(0, 10, "Flawnetic AI Audit Report", ln=True, align='C')
-            pdf.set_font("Arial", '', 10)
-            pdf.set_text_color(100, 116, 139)
-            pdf.cell(0, 6, "Autonomous E2E QA & Security Platform", ln=True, align='C')
-            pdf.ln(8)
+        # Severity Summary Table
+        critical_c = sum(1 for f in findings if f.get("severity", "").lower() == "critical")
+        high_c = sum(1 for f in findings if f.get("severity", "").lower() == "high")
+        medium_c = sum(1 for f in findings if f.get("severity", "").lower() == "medium")
+        low_c = sum(1 for f in findings if f.get("severity", "").lower() == "low")
 
-            # Metadata Box
-            pdf.set_font("Arial", 'B', 12)
-            pdf.set_text_color(15, 23, 42)
-            pdf.cell(0, 8, f"Project: {project_name}".encode('latin-1', 'replace').decode('latin-1'), ln=True)
-            pdf.set_font("Arial", '', 10)
-            pdf.cell(0, 6, f"Target URL: {target_url}".encode('latin-1', 'replace').decode('latin-1'), ln=True)
-            pdf.cell(0, 6, f"Scan Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')}", ln=True)
-            pdf.cell(0, 6, f"Pages Crawled: {total_pages} | Total Findings: {len(findings)}", ln=True)
-            pdf.ln(8)
+        pdf.set_font("Arial", 'B', 11)
+        pdf.cell(pdf.epw, 8, clean_text("Severity Summary Breakdown:"), new_x="LMARGIN", new_y="NEXT")
+        pdf.set_font("Arial", '', 10)
+        pdf.cell(pdf.epw, 6, clean_text(f"  Critical: {critical_c} | High: {high_c} | Medium: {medium_c} | Low: {low_c}"), new_x="LMARGIN", new_y="NEXT")
+        pdf.ln(10)
 
-            # Severity Summary Table
-            critical_c = sum(1 for f in findings if f.get("severity", "").lower() == "critical")
-            high_c = sum(1 for f in findings if f.get("severity", "").lower() == "high")
-            medium_c = sum(1 for f in findings if f.get("severity", "").lower() == "medium")
-            low_c = sum(1 for f in findings if f.get("severity", "").lower() == "low")
+        # Findings Section
+        pdf.set_font("Arial", 'B', 12)
+        pdf.cell(pdf.epw, 8, clean_text("Discovered Findings & Flaws:"), new_x="LMARGIN", new_y="NEXT")
+        pdf.ln(4)
 
-            pdf.set_font("Arial", 'B', 11)
-            pdf.cell(0, 8, "Severity Summary Breakdown:", ln=True)
-            pdf.set_font("Arial", '', 10)
-            pdf.cell(0, 6, f"  Critical: {critical_c} | High: {high_c} | Medium: {medium_c} | Low: {low_c}", ln=True)
-            pdf.ln(10)
+        if not findings:
+            pdf.set_font("Arial", 'I', 11)
+            pdf.set_text_color(16, 185, 129)
+            pdf.cell(pdf.epw, 10, clean_text("No issues found - Clean Audit (0 Flaws Detected)."), new_x="LMARGIN", new_y="NEXT")
+        else:
+            for idx, f in enumerate(findings, 1):
+                pdf.set_font("Arial", 'B', 10)
+                pdf.set_text_color(15, 23, 42)
+                bug_id = f.get('bug_id') or f"FL-{idx:03d}"
+                sev = f.get('severity', 'MEDIUM').upper()
+                title = f.get('title', 'Untitled Flaw')
+                mod = f.get('module', 'FUNCTIONAL').upper()
 
-            # Findings Section
-            pdf.set_font("Arial", 'B', 12)
-            pdf.cell(0, 8, "Discovered Findings & Flaws:", ln=True)
-            pdf.ln(4)
+                title_line = f"{bug_id} [{sev}] [{mod}] {title}"
+                pdf.cell(pdf.epw, 7, clean_text(title_line), new_x="LMARGIN", new_y="NEXT")
 
-            if not findings:
-                pdf.set_font("Arial", 'I', 11)
-                pdf.set_text_color(16, 185, 129)
-                pdf.cell(0, 10, "No issues found — Clean Audit (0 Flaws Detected).", ln=True)
-            else:
-                for idx, f in enumerate(findings, 1):
-                    pdf.set_font("Arial", 'B', 10)
-                    pdf.set_text_color(15, 23, 42)
-                    bug_id = f.get('bug_id') or f"FL-{idx:03d}"
-                    sev = f.get('severity', 'MEDIUM').upper()
-                    title = f.get('title', 'Untitled Flaw')
-                    mod = f.get('module', 'FUNCTIONAL').upper()
+                pdf.set_font("Arial", '', 9)
+                pdf.set_text_color(51, 65, 85)
+                if f.get('page_url'):
+                    pdf.cell(pdf.epw, 5, clean_text(f"URL: {f.get('page_url')}"), new_x="LMARGIN", new_y="NEXT")
+                
+                desc = f.get('description', '')
+                if desc:
+                    pdf.multi_cell(pdf.epw, 5, clean_text(f"Description: {desc}"))
 
-                    title_line = f"{bug_id} [{sev}] [{mod}] {title}".encode('latin-1', 'replace').decode('latin-1')
-                    pdf.cell(0, 7, title_line, ln=True)
+                if f.get('root_cause_hint'):
+                    pdf.set_font("Arial", 'I', 9)
+                    pdf.set_text_color(22, 101, 52)
+                    pdf.multi_cell(pdf.epw, 5, clean_text(f"AI Remediation: {f.get('root_cause_hint')}"))
 
-                    pdf.set_font("Arial", '', 9)
-                    pdf.set_text_color(51, 65, 85)
-                    if f.get('page_url'):
-                        pdf.cell(0, 5, f"URL: {f.get('page_url')}".encode('latin-1', 'replace').decode('latin-1'), ln=True)
-                    
-                    desc = f.get('description', '')
-                    if desc:
-                        pdf.multi_cell(0, 5, f"Description: {desc}".encode('latin-1', 'replace').decode('latin-1'))
+                pdf.ln(6)
 
-                    if f.get('root_cause_hint'):
-                        pdf.set_font("Arial", 'I', 9)
-                        pdf.set_text_color(22, 101, 52)
-                        pdf.multi_cell(0, 5, f"AI Remediation: {f.get('root_cause_hint')}".encode('latin-1', 'replace').decode('latin-1'))
+        # Footer
+        pdf.set_y(-15)
+        pdf.set_font("Arial", 'I', 8)
+        pdf.set_text_color(148, 163, 184)
+        pdf.cell(pdf.epw, 10, clean_text("Generated by Flawnetic - Automated QA Platform"), align='C')
 
-                    pdf.ln(6)
-
-            # Footer
-            pdf.set_y(-15)
-            pdf.set_font("Arial", 'I', 8)
-            pdf.set_text_color(148, 163, 184)
-            pdf.cell(0, 10, "Generated by Flawnetic — Automated QA Platform", align='C')
-
-            pdf.output(local_pdf_path)
+        pdf.output(local_pdf_path)
 
         # Upload generated PDF to MinIO/S3
         s3_key = f"reports/{scan_run_id}/{pdf_file_name}"
