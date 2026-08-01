@@ -12,12 +12,13 @@ from engines.accessibility.engine import AccessibilityEngine
 from engines.usability.engine import UsabilityEngine
 from engines.visual.engine import VisualEngine
 from engines.ai.analyzer import AIAnalyzer
+from triage.engine import AITriageEngine
 from report.generator import PDFReportGenerator
 import asyncio
 import uuid
 
 celery_app = Celery(
-    "flawnetic_worker",
+    "flawnetic",
     broker=settings.redis_url,
     backend=settings.redis_url
 )
@@ -106,7 +107,7 @@ def run_scan(scan_run_id: str):
             db.commit()
 
         if "security" in modules_to_run:
-            security_engine = SecurityEngine(zap_base_url=settings.zap_base_url, zap_api_key=settings.zap_api_key)
+            security_engine = SecurityEngine(zap_base_url=settings.zap_host, zap_api_key=settings.zap_api_key)
             for p in pages_to_test:
                 sec_results = asyncio.run(security_engine.run_zap_dast_scan(p.url))
                 for res in sec_results:
@@ -205,23 +206,36 @@ def run_scan(scan_run_id: str):
                     db.add(new_finding)
             db.commit()
 
-        # Phase 3: Report Generation
+        # Phase 3: Report Generation & Triage
         report_gen = PDFReportGenerator()
+        triage_engine = AITriageEngine()
+
         all_findings = db.query(Finding).filter(Finding.scan_run_id == scan_run.id).all()
-        findings_data = [
-            {
+        pages_count = db.query(Page).filter(Page.scan_run_id == scan_run.id).count()
+
+        raw_findings_data = []
+        for f in all_findings:
+            page_obj = db.query(Page).filter(Page.id == f.page_id).first() if f.page_id else None
+            raw_findings_data.append({
                 "title": f.title,
                 "description": f.description,
-                "severity": f.severity.name,
-                "root_cause_hint": f.root_cause_hint
-            } for f in all_findings
-        ]
-        
+                "severity": f.severity.name if hasattr(f.severity, 'name') else str(f.severity),
+                "module": f.module.name if hasattr(f.module, 'name') else str(f.module),
+                "steps_to_reproduce": f.steps_to_reproduce,
+                "root_cause_hint": f.root_cause_hint,
+                "page_url": page_obj.url if page_obj else project.base_url,
+                "screenshot_path": page_obj.screenshot_url if page_obj else None
+            })
+
+        # Run Triage Engine
+        triaged_findings = triage_engine.triage(raw_findings_data)
+
         pdf_url = report_gen.generate_and_upload(
             scan_run_id=str(scan_run.id),
-            findings=findings_data,
+            findings=triaged_findings,
             project_name=project.name,
-            target_url=project.base_url
+            target_url=project.base_url,
+            total_pages=pages_count or 1
         )
         
         new_report = Report(
