@@ -18,7 +18,7 @@ class SecurityEngine:
         self.zap_api_key = zap_api_key
         self.findings: List[Dict[str, Any]] = []
 
-    async def _check_zap_status((self)) -> bool:
+    async def _check_zap_status(self) -> bool:
         """Verifies if OWASP ZAP Daemon is online and responding."""
         try:
             async with httpx.AsyncClient(timeout=3.0) as client:

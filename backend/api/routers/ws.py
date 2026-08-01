@@ -2,7 +2,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends
 from sqlalchemy.orm import Session
 import asyncio
 
-from dependencies import get_db
+from api.dependencies import get_db
 from models.db import ScanRun, Finding
 
 router = APIRouter(prefix="/ws", tags=["Real-time WebSockets"])
