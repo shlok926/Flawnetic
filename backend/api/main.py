@@ -17,6 +17,16 @@ app.include_router(projects.router, prefix="/api/v1/projects", tags=["projects"]
 app.include_router(scans.router, prefix="/api/v1", tags=["scans"])
 app.include_router(ws.router, prefix="/api/v1", tags=["ws"])
 
+@app.get("/")
+def root():
+    return {
+        "name": "Flawnetic API Platform",
+        "status": "online",
+        "version": "1.0.0",
+        "documentation": "/docs",
+        "health": "/health"
+    }
+
 @app.get("/health")
 def health_check():
     return {"status": "ok"}
