@@ -11,8 +11,20 @@ from api.schemas import UserRegisterRequest, UserLoginRequest, TokenResponse
 from models.db import User, RoleEnum
 from config.settings import settings
 
+import bcrypt
+
 router = APIRouter()
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+def get_password_hash(password: str) -> str:
+    # Native bcrypt password hashing (safe for Python 3.11/3.12)
+    pwd_bytes = password[:72].encode('utf-8')
+    salt = bcrypt.gensalt()
+    return bcrypt.hashpw(pwd_bytes, salt).decode('utf-8')
+
+def verify_password(plain_password: str, hashed_password: str) -> bool:
+    pwd_bytes = plain_password[:72].encode('utf-8')
+    hash_bytes = hashed_password.encode('utf-8')
+    return bcrypt.checkpw(pwd_bytes, hash_bytes)
 
 def create_access_token(data: dict):
     to_encode = data.copy()
@@ -26,7 +38,7 @@ def register(user: UserRegisterRequest, db: Session = Depends(get_db)):
     if db_user:
         raise HTTPException(status_code=400, detail="Email already registered")
         
-    hashed_password = pwd_context.hash(user.password)
+    hashed_password = get_password_hash(user.password)
     new_user = User(
         id=uuid.uuid4(),
         email=user.email,
@@ -44,7 +56,7 @@ def register(user: UserRegisterRequest, db: Session = Depends(get_db)):
 @router.post("/login", response_model=TokenResponse)
 def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
     db_user = db.query(User).filter(User.email == form_data.username).first()
-    if not db_user or not pwd_context.verify(form_data.password, db_user.password_hash):
+    if not db_user or not verify_password(form_data.password, db_user.password_hash):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect email or password",
