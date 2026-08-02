@@ -408,13 +408,20 @@ class PDFReportGenerator:
                     Body=pdf_bytes,
                     ContentType='application/pdf'
                 )
-                url = self.s3_client.generate_presigned_url(
+                presigned_url = self.s3_client.generate_presigned_url(
                     'get_object',
                     Params={'Bucket': self.bucket, 'Key': s3_key},
                     ExpiresIn=604800 # 7 days
                 )
-                logger.info(f"PDF uploaded to MinIO: {url}")
-                return url
+                
+                # Replace Docker internal endpoint URL with browser-accessible public URL
+                public_url = presigned_url
+                if getattr(settings, 's3_public_url', None):
+                    public_url = presigned_url.replace(settings.s3_endpoint_url, settings.s3_public_url)
+                    public_url = public_url.replace("http://minio:9000", settings.s3_public_url)
+
+                logger.info(f"PDF uploaded to MinIO: {public_url}")
+                return public_url
             except Exception as e:
                 logger.error(f"MinIO upload failed for scan {scan_run_id}: {e}", exc_info=True)
 
