@@ -137,18 +137,46 @@ def run_scan(scan_run_id: str):
             ai_analyzer = None
 
         pages_to_test = db.query(Page).filter(Page.scan_run_id == scan_run.id).all()
+        url_to_page_id = {p.url: p.id for p in pages_to_test}
+
+        SEED_PATHS_TO_TEST = [
+            "/login", "/signin", "/sign-in", "/auth/login",
+            "/register", "/signup", "/sign-up", "/auth/register",
+            "/search", "/contact", "/feedback",
+            "/admin", "/admin/login",
+            "/bank/login.aspx",
+            "/subscribe.jsp",
+        ]
+
+        base_domain = project.base_url.rstrip('/')
+        additional_urls_to_test = []
+        import httpx
+        for path in SEED_PATHS_TO_TEST:
+            seed_url = f"{base_domain}{path}"
+            already_crawled = any(p.url == seed_url for p in pages_to_test)
+            if not already_crawled:
+                try:
+                    resp = httpx.head(seed_url, timeout=5, follow_redirects=True)
+                    if resp.status_code < 404:
+                        additional_urls_to_test.append(seed_url)
+                        logger.info(f"[TASK] Seed URL added for testing: {seed_url}")
+                except Exception:
+                    pass
+
+        all_urls_to_test = [p.url for p in pages_to_test] + additional_urls_to_test
         
         # Execute Engine Modules with per-module error isolation
         if "functional" in modules_to_run:
             functional_engine = FunctionalEngine(headless=True)
-            for p in pages_to_test:
-                results = _run_module_safely("functional", lambda url=p.url: asyncio.run(functional_engine.analyze_and_test(url)))
+            for test_url in all_urls_to_test:
+                page_id = url_to_page_id.get(test_url)
+                results = _run_module_safely("functional", lambda u=test_url: asyncio.run(functional_engine.analyze_and_test(u)))
                 for res in results:
                     ai_hint = _get_ai_hint(ai_analyzer, res["title"], res["description"], res.get("steps_to_reproduce"))
                     new_finding = Finding(
                         id=uuid.uuid4(),
                         scan_run_id=scan_run.id,
-                        page_id=p.id,
+                        page_id=page_id,
                         module=ModuleEnum.functional,
                         title=res["title"],
                         description=res["description"],

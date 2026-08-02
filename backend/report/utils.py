@@ -138,3 +138,69 @@ def sanitize_steps(steps) -> list[str]:
         return [sanitize_text(str(step)) for step in steps if step]
     
     return [sanitize_text(str(steps))]
+
+
+COLORS = {
+    "header_bg": (15, 23, 42),      # #0F172A dark slate
+    "header_text": (255, 255, 255), # white
+    "critical": (239, 68, 68),      # #EF4444 red
+    "high": (249, 115, 22),         # #F97316 orange
+    "medium": (234, 179, 8),        # #EAB308 yellow
+    "low": (59, 130, 246),          # #3B82F6 blue
+    "code_bg": (241, 245, 249),     # #F1F5F9 light grey
+    "border": (203, 213, 225),      # #CBD5E1
+    "text_primary": (15, 23, 42),   # #0F172A
+    "text_secondary": (100, 116, 139), # #64748B
+    "success": (34, 197, 94),       # #22C55E green
+}
+
+
+def compute_risk_score(findings: list) -> float:
+    """
+    Weighted risk score 0-10:
+    Critical = 10 points each
+    High     = 5 points each
+    Medium   = 2 points each  
+    Low      = 0.5 points each
+    Score = min(10.0, weighted_sum / normalizer)
+    """
+    if not findings:
+        return 0.0
+    weights = {"CRITICAL": 10.0, "HIGH": 5.0, "MEDIUM": 2.0, "LOW": 0.5}
+    total = sum(weights.get(str(f.get("severity", "LOW")).upper(), 0.5) for f in findings)
+    return round(min(10.0, (total / max(len(findings), 1)) * 1.5 + (total * 0.2)), 1)
+
+
+def get_risk_label(score: float) -> tuple:
+    """Returns (label, color_rgb_tuple) for risk score."""
+    if score >= 8.0:
+        return ("CRITICAL RISK", COLORS["critical"])
+    if score >= 6.0:
+        return ("HIGH RISK", COLORS["high"])
+    if score >= 4.0:
+        return ("MEDIUM RISK", COLORS["medium"])
+    if score >= 2.0:
+        return ("LOW RISK", COLORS["low"])
+    return ("MINIMAL RISK", COLORS["success"])
+
+
+def format_code_snippet(payload: str, max_length: int = 200) -> str:
+    """Format a payload/code snippet for display in PDF code box."""
+    if not payload:
+        return "N/A"
+    cleaned = sanitize_text(payload)
+    if len(cleaned) > max_length:
+        cleaned = cleaned[:max_length] + "..."
+    return cleaned
+
+
+def truncate_text_smart(text: str, limit: int = 300) -> str:
+    """Truncate text at sentence boundary for cleaner PDF display."""
+    if not text or len(text) <= limit:
+        return sanitize_text(text or "")
+    truncated = sanitize_text(text[:limit])
+    last_period = truncated.rfind('.')
+    if last_period > int(limit * 0.7):
+        return truncated[:last_period + 1]
+    return truncated + "..."
+

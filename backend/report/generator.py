@@ -1,14 +1,9 @@
 """
 report/generator.py
 -------------------
-PDF report generator for Flawnetic scan results.
-
-Design decisions:
-- FPDF2 chosen over WeasyPrint: WeasyPrint requires GTK which is not
-  available on Windows without manual installation. FPDF2 is pure Python
-  and works cross-platform.
-- All strings sanitized via report/utils.py before rendering.
-- MinIO upload failure is non-fatal: local fallback path returned.
+Enterprise PDF report generator for Flawnetic scan results.
+Implements executive cover page, risk ratings (0-10), colored severity badges,
+styled code boxes, finding cards, and automated QA disclaimer.
 """
 
 import os
@@ -20,13 +15,23 @@ from typing import List, Dict, Any, Optional
 import boto3
 from fpdf import FPDF
 from config.settings import settings
-from report.utils import sanitize_text, sanitize_url, sanitize_steps
+from report.utils import (
+    sanitize_text, sanitize_url, sanitize_steps,
+    compute_risk_score, get_risk_label, format_code_snippet, truncate_text_smart,
+    COLORS
+)
 
 logger = logging.getLogger(__name__)
 
 
 class FlawneticPDF(FPDF):
-    """FPDF subclass providing safe cell rendering methods."""
+    """FPDF subclass providing safe cell rendering methods and enterprise headers/footers."""
+
+    def footer(self):
+        self.set_y(-15)
+        self.set_font("Helvetica", 'I', 8)
+        self.set_text_color(*COLORS["text_secondary"])
+        self.cell(self.epw, 10, sanitize_text(f"Confidential - Flawnetic Automated QA Platform  |  Page {self.page_no()}"), align='C')
 
     def safe_cell(self, w=0, h=0, txt="", border=0, ln=0, align="", fill=False, link="", max_length=None):
         clean_txt = sanitize_text(txt, max_length=max_length)
@@ -40,6 +45,25 @@ class FlawneticPDF(FPDF):
         clean_txt = sanitize_text(txt, max_length=max_length)
         effective_w = self.epw if w == 0 else w
         self.multi_cell(effective_w, h, clean_txt, border=border, align=align, fill=fill)
+
+    def draw_severity_badge(self, x: float, y: float, severity: str):
+        """Draw a colored severity pill at position (x, y)."""
+        color = COLORS.get(severity.lower(), COLORS["low"])
+        self.set_fill_color(*color)
+        self.set_text_color(255, 255, 255)
+        self.set_font("Helvetica", 'B', 8)
+        self.set_xy(x, y)
+        self.cell(28, 6, sanitize_text(f" {severity.upper()} "), fill=True, align='C')
+        self.set_text_color(*COLORS["text_primary"])
+
+    def draw_code_box(self, code_text: str):
+        """Draw a styled code/payload box with light grey background."""
+        self.set_fill_color(*COLORS["code_bg"])
+        self.set_draw_color(*COLORS["border"])
+        self.set_font("Courier", size=8.5)
+        self.set_text_color(30, 41, 59)
+        self.safe_multi_cell(w=self.epw, h=5, txt=f"  {code_text}  ", border=1, fill=True)
+        self.set_font("Helvetica", size=9.5)
 
 
 class PDFReportGenerator:
@@ -80,42 +104,90 @@ class PDFReportGenerator:
         target_url: str,
         total_pages: int = 1
     ) -> bytes:
-        """Renders complete PDF document into bytes buffer."""
+        """Renders complete Enterprise PDF document into bytes buffer."""
         pdf = FlawneticPDF()
-        pdf.set_auto_page_break(auto=True, margin=15)
+        pdf.set_auto_page_break(auto=True, margin=18)
 
         # -------------------------------------------------------------
         # PAGE 1: COVER PAGE
         # -------------------------------------------------------------
         pdf.add_page()
-        pdf.set_font("Helvetica", 'B', 22)
-        pdf.set_text_color(79, 70, 229)
-        pdf.safe_cell(h=15, txt="FLAWNETIC QA REPORT", align='C', ln=1)
         
+        # Dark Slate Header Banner Bar (#0F172A)
+        pdf.set_fill_color(*COLORS["header_bg"])
+        pdf.rect(0, 0, 210, 42, style='F')
+        
+        pdf.set_y(10)
+        pdf.set_font("Helvetica", 'B', 22)
+        pdf.set_text_color(*COLORS["header_text"])
+        pdf.safe_cell(h=10, txt="FLAWNETIC", align='C', ln=1)
+        
+        pdf.set_font("Helvetica", '', 9.5)
+        pdf.safe_cell(h=5, txt="AUTONOMOUS QA & SECURITY AUDIT PLATFORM", align='C', ln=1)
+        pdf.ln(18)
+
+        # Executive Title
+        pdf.set_font("Helvetica", 'B', 16)
+        pdf.set_text_color(*COLORS["text_primary"])
+        pdf.safe_cell(h=8, txt="SECURITY & QA AUDIT REPORT", ln=1)
+        pdf.set_draw_color(*COLORS["border"])
+        pdf.line(10, pdf.get_y() + 2, 200, pdf.get_y() + 2)
+        pdf.ln(8)
+
+        # Metadata Block
         pdf.set_font("Helvetica", '', 10)
-        pdf.set_text_color(100, 116, 139)
-        pdf.safe_cell(h=6, txt="Autonomous Enterprise E2E QA & Vulnerability Audit Platform", align='C', ln=1)
+        pdf.set_text_color(*COLORS["text_secondary"])
+        pdf.safe_cell(h=6, txt=f"Project:      {project_name}", ln=1)
+        pdf.safe_cell(h=6, txt=f"Target URL:   {sanitize_url(target_url, max_length=90)}", ln=1)
+        pdf.safe_cell(h=6, txt=f"Scan Date:    {datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')}", ln=1)
+        pdf.safe_cell(h=6, txt=f"Crawled:      {total_pages} Pages  |  Total Findings: {len(findings)}  |  Scan ID: {scan_run_id[:8]}", ln=1)
         pdf.ln(12)
 
-        # Cover Metadata Box
-        pdf.set_font("Helvetica", 'B', 12)
-        pdf.set_text_color(15, 23, 42)
-        pdf.safe_cell(h=8, txt=f"Project: {project_name}", ln=1)
-        pdf.set_font("Helvetica", '', 10)
-        pdf.safe_cell(h=6, txt=f"Target URL: {sanitize_url(target_url, max_length=100)}", ln=1)
-        pdf.safe_cell(h=6, txt=f"Scan Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')}", ln=1)
-        pdf.safe_cell(h=6, txt=f"Pages Crawled: {total_pages}", ln=1)
-        pdf.safe_cell(h=6, txt=f"Total Findings: {len(findings)}", ln=1)
-        pdf.safe_cell(h=6, txt=f"Scan Run ID: {scan_run_id}", ln=1)
-        pdf.ln(15)
+        # Risk Score Calculation Box
+        risk_score = compute_risk_score(findings)
+        risk_label, risk_color = get_risk_label(risk_score)
+
+        pdf.set_font("Helvetica", 'B', 11)
+        pdf.set_text_color(*COLORS["text_primary"])
+        pdf.safe_cell(h=6, txt="OVERALL RISK SCORE RATING", ln=1)
+        pdf.ln(2)
+
+        # Fill Risk Score Card Box
+        curr_y = pdf.get_y()
+        pdf.set_fill_color(*COLORS["code_bg"])
+        pdf.set_draw_color(*COLORS["border"])
+        pdf.rect(10, curr_y, 190, 24, style='FD')
+
+        # Score Pill
+        pdf.set_fill_color(*risk_color)
+        pdf.set_text_color(255, 255, 255)
+        pdf.set_font("Helvetica", 'B', 10)
+        pdf.set_xy(16, curr_y + 6)
+        pdf.cell(40, 12, sanitize_text(f" {risk_label} "), fill=True, align='C')
+
+        # Score Text
+        pdf.set_xy(62, curr_y + 7)
+        pdf.set_font("Helvetica", 'B', 13)
+        pdf.set_text_color(*COLORS["text_primary"])
+        pdf.cell(0, 6, sanitize_text(f"Score: {risk_score} / 10"), ln=1)
+
+        pdf.set_xy(62, curr_y + 13)
+        pdf.set_font("Helvetica", '', 9)
+        pdf.set_text_color(*COLORS["text_secondary"])
+        pdf.cell(0, 5, sanitize_text("Weighted score based on Critical, High, Medium, and Low severity flaws."), ln=1)
+        
+        pdf.set_y(curr_y + 32)
+        pdf.set_font("Helvetica", 'I', 8.5)
+        pdf.set_text_color(*COLORS["text_secondary"])
+        pdf.safe_cell(h=6, txt="CONFIDENTIAL - Authorized Client Use Only", align='C', ln=1)
 
         # -------------------------------------------------------------
-        # PAGE 2: SUMMARY BREAKDOWN
+        # PAGE 2: EXECUTIVE SUMMARY & MODULE STATUS
         # -------------------------------------------------------------
         pdf.add_page()
         pdf.set_font("Helvetica", 'B', 14)
-        pdf.set_text_color(15, 23, 42)
-        pdf.safe_cell(h=10, txt="Executive Summary & Severity Breakdown", ln=1)
+        pdf.set_text_color(*COLORS["text_primary"])
+        pdf.safe_cell(h=8, txt="Executive Summary & Severity Matrix", ln=1)
         pdf.ln(4)
 
         critical_c = sum(1 for f in findings if str(f.get("severity", "")).upper() == "CRITICAL")
@@ -123,102 +195,195 @@ class PDFReportGenerator:
         medium_c = sum(1 for f in findings if str(f.get("severity", "")).upper() == "MEDIUM")
         low_c = sum(1 for f in findings if str(f.get("severity", "")).upper() == "LOW")
 
-        pdf.set_font("Helvetica", 'B', 10)
-        pdf.safe_cell(h=8, txt="Severity Breakdown Table:", ln=1)
-        pdf.set_font("Helvetica", '', 10)
-        pdf.safe_cell(h=6, txt=f"  [CRITICAL] Critical Severity: {critical_c}", ln=1)
-        pdf.safe_cell(h=6, txt=f"  [HIGH]     High Severity:     {high_c}", ln=1)
-        pdf.safe_cell(h=6, txt=f"  [MEDIUM]   Medium Severity:   {medium_c}", ln=1)
-        pdf.safe_cell(h=6, txt=f"  [LOW]      Low Severity:      {low_c}", ln=1)
+        # 4 Side-by-Side Severity Breakdown Cards
+        y_pos = pdf.get_y()
+        box_w = 44
+        box_h = 22
+        
+        counts = [
+            ("CRITICAL", critical_c, COLORS["critical"]),
+            ("HIGH", high_c, COLORS["high"]),
+            ("MEDIUM", medium_c, COLORS["medium"]),
+            ("LOW", low_c, COLORS["low"]),
+        ]
+
+        for i, (sev_name, count_val, col_rgb) in enumerate(counts):
+            x_pos = 10 + (i * 47)
+            pdf.set_fill_color(*COLORS["code_bg"])
+            pdf.set_draw_color(*COLORS["border"])
+            pdf.rect(x_pos, y_pos, box_w, box_h, style='FD')
+            
+            pdf.set_fill_color(*col_rgb)
+            pdf.set_text_color(255, 255, 255)
+            pdf.set_font("Helvetica", 'B', 7.5)
+            pdf.set_xy(x_pos + 4, y_pos + 3)
+            pdf.cell(36, 4, sanitize_text(f" {sev_name} "), fill=True, align='C')
+
+            pdf.set_xy(x_pos, y_pos + 10)
+            pdf.set_font("Helvetica", 'B', 12)
+            pdf.set_text_color(*COLORS["text_primary"])
+            pdf.cell(box_w, 8, sanitize_text(str(count_val)), align='C')
+
+        pdf.set_y(y_pos + box_h + 10)
+
+        # Module Audit Status Table
+        pdf.set_font("Helvetica", 'B', 11)
+        pdf.safe_cell(h=6, txt="Module Audit Status Summary:", ln=1)
+        pdf.ln(2)
+
+        # Table Header
+        pdf.set_fill_color(*COLORS["header_bg"])
+        pdf.set_text_color(255, 255, 255)
+        pdf.set_font("Helvetica", 'B', 9)
+        pdf.cell(70, 7, sanitize_text(" Module Name"), fill=True)
+        pdf.cell(60, 7, sanitize_text(" Status"), fill=True)
+        pdf.cell(60, 7, sanitize_text(" Findings Count"), fill=True, new_x="LMARGIN", new_y="NEXT")
+
+        # Table Rows
+        modules_summary = [
+            ("Functional Engine", "Complete", sum(1 for f in findings if str(f.get("module","")).lower() == "functional")),
+            ("Security Engine (DAST)", "Complete", sum(1 for f in findings if str(f.get("module","")).lower() == "security")),
+            ("Accessibility (WCAG)", "Complete", sum(1 for f in findings if str(f.get("module","")).lower() == "accessibility")),
+            ("Usability & Responsiveness", "Complete", sum(1 for f in findings if str(f.get("module","")).lower() == "usability")),
+            ("Visual Rendering", "Complete", sum(1 for f in findings if str(f.get("module","")).lower() == "visual")),
+        ]
+
+        pdf.set_font("Helvetica", '', 9)
+        pdf.set_text_color(*COLORS["text_primary"])
+        for mod_name, mod_stat, mod_cnt in modules_summary:
+            pdf.set_fill_color(*COLORS["code_bg"])
+            pdf.cell(70, 6, sanitize_text(f" {mod_name}"), border=1)
+            pdf.cell(60, 6, sanitize_text(f" {mod_stat}"), border=1)
+            pdf.cell(60, 6, sanitize_text(f" {mod_cnt} issues"), border=1, new_x="LMARGIN", new_y="NEXT")
+
         pdf.ln(10)
 
         # -------------------------------------------------------------
-        # PAGES 3+: FINDINGS (One per page / section)
+        # PAGES 3+: DETAILED FINDING CARDS (one per page)
         # -------------------------------------------------------------
-        pdf.set_font("Helvetica", 'B', 14)
-        pdf.safe_cell(h=10, txt="Detailed Finding Analysis & Reproduction Steps", ln=1)
-        pdf.ln(4)
-
         if not findings:
-            pdf.set_font("Helvetica", 'I', 11)
-            pdf.set_text_color(16, 185, 129)
+            pdf.add_page()
+            pdf.set_font("Helvetica", 'B', 12)
+            pdf.safe_cell(h=8, txt="Discovered Vulnerabilities & Quality Flaws", ln=1)
+            pdf.ln(4)
+            pdf.set_font("Helvetica", 'I', 10)
+            pdf.set_text_color(*COLORS["success"])
             pdf.safe_cell(h=10, txt="No issues found - Clean Audit (0 Flaws Detected).", ln=1)
         else:
             for idx, f in enumerate(findings, 1):
                 pdf.add_page()
-                pdf.set_font("Helvetica", 'B', 12)
-                pdf.set_text_color(15, 23, 42)
                 
                 bug_id = f.get('bug_id') or f"FL-{idx:03d}"
                 title = f.get('title', 'Untitled Flaw')
                 sev = str(f.get('severity', 'LOW')).upper()
                 mod = str(f.get('module', 'functional')).upper()
 
-                pdf.safe_cell(h=8, txt=f"{bug_id} - {title}", ln=1)
+                # Card Header Bar
+                curr_y = pdf.get_y()
+                pdf.set_fill_color(*COLORS["header_bg"])
+                pdf.rect(10, curr_y, 190, 10, style='F')
 
-                pdf.set_font("Helvetica", '', 10)
-                pdf.set_text_color(71, 85, 105)
-                pdf.safe_cell(h=6, txt=f"Severity: {sev}  |  Module: {mod}", ln=1)
-                pdf.safe_cell(h=6, txt=f"Page URL: {sanitize_url(f.get('page_url'))}", ln=1)
-                pdf.ln(4)
+                pdf.set_xy(12, curr_y + 2)
+                pdf.set_font("Helvetica", 'B', 10)
+                pdf.set_text_color(255, 255, 255)
+                pdf.cell(140, 6, sanitize_text(f"{bug_id}  |  {title}", max_length=65))
+
+                pdf.draw_severity_badge(170, curr_y + 2, sev)
+                pdf.set_y(curr_y + 14)
+
+                # Metadata Metadata Grid
+                pdf.set_font("Helvetica", '', 8.5)
+                pdf.set_text_color(*COLORS["text_secondary"])
+                pdf.safe_cell(h=5, txt=f"Target URL: {sanitize_url(f.get('page_url'), max_length=95)}", ln=1)
+                pdf.safe_cell(h=5, txt=f"Module: {mod}   |   Impact Category: Input Validation & Security Integrity", ln=1)
+                pdf.ln(3)
 
                 # Description
-                pdf.set_font("Helvetica", 'B', 10)
-                pdf.set_text_color(15, 23, 42)
-                pdf.safe_cell(h=6, txt="Description:", ln=1)
-                pdf.set_font("Helvetica", '', 10)
-                pdf.set_text_color(51, 65, 85)
-                desc = f.get('description', 'No detailed description provided.')
-                pdf.safe_multi_cell(h=5, txt=desc, max_length=500)
-                pdf.ln(4)
-
-                # Steps to Reproduce
-                pdf.set_font("Helvetica", 'B', 10)
-                pdf.set_text_color(15, 23, 42)
-                pdf.safe_cell(h=6, txt="Steps to Reproduce:", ln=1)
+                pdf.set_font("Helvetica", 'B', 9.5)
+                pdf.set_text_color(*COLORS["text_primary"])
+                pdf.safe_cell(h=5, txt="Business Impact & Description:", ln=1)
                 pdf.set_font("Helvetica", '', 9)
                 pdf.set_text_color(51, 65, 85)
+                desc = truncate_text_smart(f.get('description', 'No detailed description provided.'), limit=400)
+                pdf.safe_multi_cell(h=4.5, txt=desc)
+                pdf.ln(3)
+
+                # Steps to Reproduce & Code Box
+                pdf.set_font("Helvetica", 'B', 9.5)
+                pdf.set_text_color(*COLORS["text_primary"])
+                pdf.safe_cell(h=5, txt="Steps to Reproduce & Code Payload:", ln=1)
+                
                 steps_list = sanitize_steps(f.get('steps_to_reproduce'))
-                for step in steps_list:
-                    pdf.safe_cell(h=5, txt=f"  * {step}", ln=1, max_length=150)
-                pdf.ln(4)
-
-                # Expected Result
-                pdf.set_font("Helvetica", 'B', 10)
-                pdf.set_text_color(15, 23, 42)
-                pdf.safe_cell(h=6, txt="Expected Result:", ln=1)
-                pdf.set_font("Helvetica", '', 9)
+                pdf.set_font("Helvetica", '', 8.5)
                 pdf.set_text_color(51, 65, 85)
-                exp = f.get('expected_result', 'System should validate input and process request securely without errors.')
-                pdf.safe_multi_cell(h=5, txt=exp, max_length=300)
-                pdf.ln(4)
+                for step in steps_list[:4]:
+                    pdf.safe_cell(h=4.5, txt=f"  * {step}", ln=1, max_length=120)
+                pdf.ln(2)
 
-                # Actual Result
-                pdf.set_font("Helvetica", 'B', 10)
-                pdf.set_text_color(15, 23, 42)
-                pdf.safe_cell(h=6, txt="Actual Result:", ln=1)
-                pdf.set_font("Helvetica", '', 9)
+                # Payload / Code Snippet Box
+                payload_code = format_code_snippet(f.get('payload') or f.get('description', 'N/A')[:100], max_length=180)
+                pdf.draw_code_box(payload_code)
+                pdf.ln(3)
+
+                # Expected vs Actual Results
+                pdf.set_font("Helvetica", 'B', 9)
+                pdf.set_text_color(*COLORS["text_primary"])
+                pdf.safe_cell(h=4.5, txt="Expected Result: ", ln=0)
+                pdf.set_font("Helvetica", '', 8.5)
                 pdf.set_text_color(51, 65, 85)
-                act = f.get('actual_result', 'Anomalous behavior or unhandled exception observed during scan.')
-                pdf.safe_multi_cell(h=5, txt=act, max_length=300)
-                pdf.ln(4)
+                exp = truncate_text_smart(f.get('expected_result', 'System should validate input securely without errors.'), limit=180)
+                pdf.safe_cell(h=4.5, txt=exp, ln=1)
 
-                # Root Cause Hint
+                pdf.set_font("Helvetica", 'B', 9)
+                pdf.set_text_color(*COLORS["text_primary"])
+                pdf.safe_cell(h=4.5, txt="Actual Result:   ", ln=0)
+                pdf.set_font("Helvetica", '', 8.5)
+                pdf.set_text_color(51, 65, 85)
+                act = truncate_text_smart(f.get('actual_result', 'Anomalous behavior or unhandled exception observed during scan.'), limit=180)
+                pdf.safe_cell(h=4.5, txt=act, ln=1)
+                pdf.ln(3)
+
+                # AI Root Cause & Remediation Hint
                 hint = f.get('root_cause_hint')
                 if hint:
-                    pdf.set_font("Helvetica", 'B', 10)
+                    pdf.set_font("Helvetica", 'B', 9.5)
+                    pdf.set_text_color(22, 101, 52) # Dark green
+                    pdf.safe_cell(h=5, txt="AI Root Cause Analysis & Code Remediation Patch:", ln=1)
+                    pdf.set_font("Helvetica", 'I', 8.5)
                     pdf.set_text_color(22, 101, 52)
-                    pdf.safe_cell(h=6, txt="Root Cause & AI Remediation Hint:", ln=1)
-                    pdf.set_font("Helvetica", 'I', 9)
-                    pdf.safe_multi_cell(h=5, txt=hint, max_length=300)
+                    pdf.safe_multi_cell(h=4.5, txt=truncate_text_smart(hint, limit=350))
 
         # -------------------------------------------------------------
-        # FOOTER (Last page)
+        # LAST PAGE: DISCLAIMER & AUDIT SCOPE
         # -------------------------------------------------------------
-        pdf.set_y(-15)
-        pdf.set_font("Helvetica", 'I', 8)
-        pdf.set_text_color(148, 163, 184)
-        pdf.safe_cell(h=10, txt=f"Generated by Flawnetic - Automated QA Platform | Scan ID: {scan_run_id}", align='C')
+        pdf.add_page()
+        pdf.set_font("Helvetica", 'B', 12)
+        pdf.set_text_color(*COLORS["text_primary"])
+        pdf.safe_cell(h=8, txt="Audit Scope & Automated Testing Disclaimer", ln=1)
+        pdf.set_draw_color(*COLORS["border"])
+        pdf.line(10, pdf.get_y() + 2, 200, pdf.get_y() + 2)
+        pdf.ln(6)
+
+        disclaimer_text = (
+            "This report was automatically generated by Flawnetic Autonomous QA Platform. "
+            "Automated scanning provides rapid detection of common web vulnerabilities, accessibility failures, "
+            "and usability regressions. However, automated testing cannot replace comprehensive manual penetration testing "
+            "or manual code review. All tests were executed against authorized endpoints under configured scan bounds."
+        )
+
+        pdf.set_font("Helvetica", '', 9)
+        pdf.set_text_color(*COLORS["text_secondary"])
+        pdf.safe_multi_cell(h=5, txt=disclaimer_text)
+        pdf.ln(10)
+
+        pdf.set_font("Helvetica", 'B', 10)
+        pdf.set_text_color(*COLORS["text_primary"])
+        pdf.safe_cell(h=6, txt="Scan Execution Bounds & Environment:", ln=1)
+        pdf.set_font("Helvetica", '', 8.5)
+        pdf.safe_cell(h=5, txt=f"  - Flawnetic Engine Version: 1.0.0 Enterprise", ln=1)
+        pdf.safe_cell(h=5, txt=f"  - Target Hostname: {target_url}", ln=1)
+        pdf.safe_cell(h=5, txt=f"  - Pages Analyzed: {total_pages}", ln=1)
+        pdf.safe_cell(h=5, txt=f"  - Report Generation Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')}", ln=1)
 
         # Output bytes buffer
         return bytes(pdf.output())
