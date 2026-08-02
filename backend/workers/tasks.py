@@ -181,6 +181,8 @@ def run_scan(scan_run_id: str):
                         title=res["title"],
                         description=res["description"],
                         steps_to_reproduce=res.get("steps_to_reproduce"),
+                        expected_result=res.get("expected_result"),
+                        actual_result=res.get("actual_result"),
                         severity=getattr(SeverityEnum, res["severity"].lower(), SeverityEnum.medium),
                         priority=getattr(PriorityEnum, res["priority"].lower(), PriorityEnum.medium),
                         root_cause_hint=ai_hint
@@ -288,6 +290,8 @@ def run_scan(scan_run_id: str):
                 "severity": f.severity.name if hasattr(f.severity, 'name') else str(f.severity),
                 "module": f.module.name if hasattr(f.module, 'name') else str(f.module),
                 "steps_to_reproduce": f.steps_to_reproduce,
+                "expected_result": f.expected_result,
+                "actual_result": f.actual_result,
                 "root_cause_hint": f.root_cause_hint,
                 "page_url": page_obj.url if page_obj else project.base_url,
                 "screenshot_path": page_obj.screenshot_url if page_obj else None
