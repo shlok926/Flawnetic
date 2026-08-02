@@ -43,6 +43,10 @@ services:
       dockerfile: Dockerfile
     ports: ["8000:8000"]
     env_file: .env
+    environment:
+      - DATABASE_URL=postgresql+psycopg2://flawnetic:password@postgres:5432/flawnetic_db
+      - REDIS_URL=redis://redis:6379/0
+      - S3_ENDPOINT_URL=http://minio:9000
     depends_on: [postgres, redis]
     command: uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
     volumes: [./backend:/app]
@@ -52,6 +56,10 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     env_file: .env
+    environment:
+      - DATABASE_URL=postgresql+psycopg2://flawnetic:password@postgres:5432/flawnetic_db
+      - REDIS_URL=redis://redis:6379/0
+      - S3_ENDPOINT_URL=http://minio:9000
     depends_on: [postgres, redis, minio]
     command: celery -A workers.celery_app worker --loglevel=info
     volumes: [./backend:/app]
