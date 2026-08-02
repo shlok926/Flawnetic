@@ -124,20 +124,38 @@ def sanitize_url(url: Optional[str], max_length: int = 80) -> str:
 
 
 def sanitize_steps(steps) -> list[str]:
-    """Sanitize a list or dict of reproduction steps."""
+    """Sanitize steps into a clean numbered list: '1. Step description'."""
     if not steps:
-        return ["No steps recorded."]
-    
+        return ["1. No reproduction steps recorded."]
+
+    raw_items = []
     if isinstance(steps, dict):
-        result = []
         for k, v in steps.items():
-            result.append(sanitize_text(f"{k}: {v}"))
-        return result
+            if v:
+                raw_items.append(v)
+    elif isinstance(steps, list):
+        for item in steps:
+            if isinstance(item, dict):
+                for k, v in item.items():
+                    if v:
+                        raw_items.append(v)
+            elif item:
+                raw_items.append(item)
+    elif steps:
+        raw_items.append(steps)
+
+    cleaned = []
+    for idx, item in enumerate(raw_items, 1):
+        s = sanitize_text(str(item))
+        # Remove prefix if already starts with step key like "step_1:" or "step:"
+        if ":" in s and any(s.lower().startswith(p) for p in ["step:", "step_"]):
+            s = s.split(":", 1)[1].strip()
+        # Remove existing numbering if present
+        elif s and s[0].isdigit() and s[1:3] in [". ", ") "]:
+            s = s[2:].strip()
+        cleaned.append(f"{idx}. {s}")
     
-    if isinstance(steps, list):
-        return [sanitize_text(str(step)) for step in steps if step]
-    
-    return [sanitize_text(str(steps))]
+    return cleaned or ["1. No reproduction steps recorded."]
 
 
 COLORS = {
@@ -157,18 +175,17 @@ COLORS = {
 
 def compute_risk_score(findings: list) -> float:
     """
-    Weighted risk score 0-10:
-    Critical = 10 points each
-    High     = 5 points each
-    Medium   = 2 points each  
-    Low      = 0.5 points each
-    Score = min(10.0, weighted_sum / normalizer)
+    Normalized Risk Score 0-10 based on maximum potential risk:
+    Formula: score = min(10.0, (total_weighted / (count * 10.0)) * 10.0)
+    CRITICAL = 10.0, HIGH = 5.0, MEDIUM = 2.0, LOW = 0.5
     """
     if not findings:
         return 0.0
     weights = {"CRITICAL": 10.0, "HIGH": 5.0, "MEDIUM": 2.0, "LOW": 0.5}
-    total = sum(weights.get(str(f.get("severity", "LOW")).upper(), 0.5) for f in findings)
-    return round(min(10.0, (total / max(len(findings), 1)) * 1.5 + (total * 0.2)), 1)
+    total_weighted = sum(weights.get(str(f.get("severity", "LOW")).upper(), 0.5) for f in findings)
+    max_possible = len(findings) * 10.0
+    score = (total_weighted / max_possible) * 10.0
+    return round(min(10.0, max(0.0, score)), 1)
 
 
 def get_risk_label(score: float) -> tuple:

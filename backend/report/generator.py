@@ -304,7 +304,7 @@ class PDFReportGenerator:
                 pdf.safe_cell(h=5, txt="Business Impact & Description:", ln=1)
                 pdf.set_font("Helvetica", '', 9)
                 pdf.set_text_color(51, 65, 85)
-                desc = truncate_text_smart(f.get('description', 'No detailed description provided.'), limit=400)
+                desc = truncate_text_smart(f.get('description', 'No detailed description provided.'), limit=600)
                 pdf.safe_multi_cell(h=4.5, txt=desc)
                 pdf.ln(3)
 
@@ -316,31 +316,33 @@ class PDFReportGenerator:
                 steps_list = sanitize_steps(f.get('steps_to_reproduce'))
                 pdf.set_font("Helvetica", '', 8.5)
                 pdf.set_text_color(51, 65, 85)
-                for step in steps_list[:4]:
-                    pdf.safe_cell(h=4.5, txt=f"  * {step}", ln=1, max_length=120)
+                for step in steps_list:
+                    pdf.safe_multi_cell(h=4.5, txt=f"  {step}")
                 pdf.ln(2)
 
                 # Payload / Code Snippet Box
-                payload_code = format_code_snippet(f.get('payload') or f.get('description', 'N/A')[:100], max_length=180)
+                payload_code = format_code_snippet(f.get('payload') or f.get('description', 'N/A')[:100], max_length=200)
                 pdf.draw_code_box(payload_code)
                 pdf.ln(3)
 
-                # Expected vs Actual Results
+                # Expected Result
                 pdf.set_font("Helvetica", 'B', 9)
                 pdf.set_text_color(*COLORS["text_primary"])
-                pdf.safe_cell(h=4.5, txt="Expected Result: ", ln=0)
+                pdf.safe_cell(h=4.5, txt="Expected Result:", ln=1)
                 pdf.set_font("Helvetica", '', 8.5)
                 pdf.set_text_color(51, 65, 85)
-                exp = truncate_text_smart(f.get('expected_result', 'System should validate input securely without errors.'), limit=180)
-                pdf.safe_cell(h=4.5, txt=exp, ln=1)
+                exp = truncate_text_smart(f.get('expected_result', 'System should validate input securely without errors.'), limit=500)
+                pdf.safe_multi_cell(h=4.5, txt=exp)
+                pdf.ln(2)
 
+                # Actual Result
                 pdf.set_font("Helvetica", 'B', 9)
                 pdf.set_text_color(*COLORS["text_primary"])
-                pdf.safe_cell(h=4.5, txt="Actual Result:   ", ln=0)
+                pdf.safe_cell(h=4.5, txt="Actual Result:", ln=1)
                 pdf.set_font("Helvetica", '', 8.5)
                 pdf.set_text_color(51, 65, 85)
-                act = truncate_text_smart(f.get('actual_result', 'Anomalous behavior or unhandled exception observed during scan.'), limit=180)
-                pdf.safe_cell(h=4.5, txt=act, ln=1)
+                act = truncate_text_smart(f.get('actual_result', 'Anomalous behavior or unhandled exception observed during scan.'), limit=500)
+                pdf.safe_multi_cell(h=4.5, txt=act)
                 pdf.ln(3)
 
                 # AI Root Cause & Remediation Hint
@@ -351,7 +353,7 @@ class PDFReportGenerator:
                     pdf.safe_cell(h=5, txt="AI Root Cause Analysis & Code Remediation Patch:", ln=1)
                     pdf.set_font("Helvetica", 'I', 8.5)
                     pdf.set_text_color(22, 101, 52)
-                    pdf.safe_multi_cell(h=4.5, txt=truncate_text_smart(hint, limit=350))
+                    pdf.safe_multi_cell(h=4.5, txt=truncate_text_smart(hint, limit=600))
 
         # -------------------------------------------------------------
         # LAST PAGE: DISCLAIMER & AUDIT SCOPE
