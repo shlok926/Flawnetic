@@ -32,11 +32,33 @@ class ConnectionManager:
 
 manager = ConnectionManager()
 
+from jose import JWTError, jwt
+from config.settings import settings
+
 @router.websocket("/scans/{scan_id}")
-async def websocket_scan_progress(websocket: WebSocket, scan_id: str, db: Session = Depends(get_db)):
+async def websocket_scan_progress(
+    websocket: WebSocket, 
+    scan_id: str, 
+    token: str = None,
+    db: Session = Depends(get_db)
+):
     """
-    Real-time WebSocket connection endpoint for monitoring live scan progress and findings stream.
+    Real-time WebSocket connection endpoint with mandatory JWT token validation.
     """
+    if not token:
+        await websocket.close(code=1008, reason="Missing authentication token")
+        return
+
+    try:
+        payload = jwt.decode(token, settings.jwt_secret_key, algorithms=[settings.jwt_algorithm])
+        user_id: str = payload.get("sub")
+        if user_id is None:
+            await websocket.close(code=1008, reason="Invalid authentication token payload")
+            return
+    except JWTError:
+        await websocket.close(code=1008, reason="Invalid authentication token signature")
+        return
+
     await manager.connect(scan_id, websocket)
     try:
         while True:
