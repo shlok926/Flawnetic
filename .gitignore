@@ -6,4 +6,8 @@ node_modules/
 venv/
 .venv/
 .ai/
-
+.coverage
+coverage.xml
+backend/reports/
+ai-workspace.html
+devcore-standards.html

@@ -1,0 +1,15 @@
+{
+  "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
+  "span_id": "00f067aa0ba902b7",
+  "parent_span_id": "5c9b1a2388e401d9",
+  "span_name": "security_engine_execution",
+  "start_time": "2026-08-04T00:10:00.125Z",
+  "end_time": "2026-08-04T00:10:00.967Z",
+  "duration_ms": 842,
+  "attributes": {
+    "scan_id": "scan-20260804-001",
+    "engine": "security",
+    "target_url": "https://example.com",
+    "status": "SUCCESS"
+  }
+}

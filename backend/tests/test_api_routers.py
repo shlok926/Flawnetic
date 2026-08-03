@@ -18,15 +18,19 @@ def test_api_health_endpoint():
     assert response.json() == {"status": "ok"}
 
 def test_auth_register_duplicate_email():
-    # Attempting to register existing email returns HTTP 400
-    with patch("api.routers.auth.get_db") as mock_db_dep:
-        mock_db = MagicMock()
-        mock_db.query.return_value.filter.return_value.first.return_value = MagicMock()
-        app.dependency_overrides = {}
-        
-        # Test auth router password validation
+    from api.dependencies import get_db
+    mock_db = MagicMock()
+    mock_db.query.return_value.filter.return_value.first.return_value = MagicMock()
+    
+    def override_get_db():
+        yield mock_db
+
+    app.dependency_overrides[get_db] = override_get_db
+    try:
         response = client.post(
             "/api/v1/auth/register",
             json={"email": "test@example.com", "password": "password123", "name": "Test User"}
         )
         assert response.status_code in [200, 400]
+    finally:
+        app.dependency_overrides.clear()

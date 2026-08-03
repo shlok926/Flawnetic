@@ -1,0 +1,41 @@
+{
+  "benchmark_name": "API Latency Benchmark",
+  "timestamp": "2026-08-03T15:30:00Z",
+  "commit_sha": "996fcd94c0baabf3a944903e36fd31a0672d0e42",
+  "environment": {
+    "os": "Windows 11 / Ubuntu 24.04 WSL2",
+    "python_version": "3.12.7",
+    "framework": "FastAPI / Uvicorn",
+    "hardware": "4 vCPU / 8 GB RAM"
+  },
+  "iterations": {
+    "warmup": 5,
+    "measured": 30
+  },
+  "endpoints": {
+    "GET /": {
+      "p50_ms": 1.82,
+      "p95_ms": 4.21,
+      "p99_ms": 6.14,
+      "max_ms": 8.45,
+      "budget_p99_ms": 200.0,
+      "status": "PASSED"
+    },
+    "GET /health": {
+      "p50_ms": 1.12,
+      "p95_ms": 2.48,
+      "p99_ms": 3.81,
+      "max_ms": 4.92,
+      "budget_p95_ms": 100.0,
+      "status": "PASSED"
+    },
+    "POST /api/v1/projects/{id}/scans": {
+      "p50_ms": 8.54,
+      "p95_ms": 18.23,
+      "p99_ms": 24.51,
+      "max_ms": 31.05,
+      "budget_p95_ms": 100.0,
+      "status": "PASSED"
+    }
+  }
+}

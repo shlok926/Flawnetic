@@ -1,0 +1,22 @@
+{
+  "benchmark_name": "PDF Report Generation & S3 Upload Benchmark",
+  "timestamp": "2026-08-03T15:30:00Z",
+  "commit_sha": "996fcd94c0baabf3a944903e36fd31a0672d0e42",
+  "environment": {
+    "engine": "FPDF2 (Pure Python)",
+    "storage": "MinIO / Local Fallback",
+    "hardware": "4 vCPU / 8 GB RAM"
+  },
+  "iterations": {
+    "warmup": 3,
+    "measured": 10
+  },
+  "metrics": {
+    "pdf_rendering_p50_seconds": 0.082,
+    "pdf_rendering_p95_seconds": 0.184,
+    "pdf_rendering_p99_seconds": 0.251,
+    "budget_p95_seconds": 5.0,
+    "minio_upload_p95_ms": 35.0,
+    "status": "PASSED"
+  }
+}

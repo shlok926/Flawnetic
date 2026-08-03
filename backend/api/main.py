@@ -1,10 +1,48 @@
-from fastapi import FastAPI
-from api.routers import auth, projects, scans, ws
+import uuid
+import time
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
+from api.routers import auth, projects, scans, ws, health
 from config.settings import settings
+from observability.logging import correlation_id_var, request_id_var, trace_id_var, span_id_var, setup_structured_logging
+from observability.tracing import generate_trace_id, generate_span_id
+from observability.metrics import metrics_registry
 
-app = FastAPI(title="Flawnetic API", version="1.0.0")
+setup_structured_logging()
+
+app = FastAPI(title="Flawnetic Enterprise API Platform", version="1.0.0")
+
+@app.middleware("http")
+async def correlation_id_middleware(request: Request, call_next):
+    correlation_id = request.headers.get("X-Correlation-ID") or str(uuid.uuid4())
+    request_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())
+    trace_id = request.headers.get("X-Trace-ID") or generate_trace_id()
+    span_id = generate_span_id()
+
+    token_corr = correlation_id_var.set(correlation_id)
+    token_req = request_id_var.set(request_id)
+    token_trace = trace_id_var.set(trace_id)
+    token_span = span_id_var.set(span_id)
+
+    start_time = time.perf_counter()
+    metrics_registry.inc_counter("api_requests_total")
+
+    try:
+        response = await call_next(request)
+        duration_ms = (time.perf_counter() - start_time) * 1000.0
+        metrics_registry.observe_histogram("api_request_duration_ms", duration_ms)
+
+        response.headers["X-Correlation-ID"] = correlation_id
+        response.headers["X-Request-ID"] = request_id
+        response.headers["X-Trace-ID"] = trace_id
+        response.headers["X-Span-ID"] = span_id
+        return response
+    finally:
+        correlation_id_var.reset(token_corr)
+        request_id_var.reset(token_req)
+        trace_id_var.reset(token_trace)
+        span_id_var.reset(token_span)
 
 # Restrict CORS origins strictly to configured frontend URLs
 origins = [origin.strip() for origin in settings.frontend_url.split(",") if origin.strip()]
@@ -20,6 +58,7 @@ app.include_router(auth.router, prefix="/api/v1/auth", tags=["auth"])
 app.include_router(projects.router, prefix="/api/v1/projects", tags=["projects"])
 app.include_router(scans.router, prefix="/api/v1", tags=["scans"])
 app.include_router(ws.router, prefix="/api/v1", tags=["ws"])
+app.include_router(health.router, tags=["health"])
 
 @app.get("/")
 def root():
@@ -28,7 +67,7 @@ def root():
         "status": "online",
         "version": "1.0.0",
         "documentation": "/docs",
-        "health": "/health"
+        "health": "/health/live"
     }
 
 @app.get("/health")

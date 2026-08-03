@@ -1,0 +1,25 @@
+{
+  "timestamp": "2026-08-04T00:10:00Z",
+  "system_metrics": {
+    "memory_usage_mb": 210.5,
+    "cpu_usage_pct": 24.2,
+    "active_browser_contexts": 2
+  },
+  "application_metrics": {
+    "api_requests_total": 1420,
+    "queue_depth": 0,
+    "active_workers": 4,
+    "avg_api_latency_ms": 4.2
+  },
+  "business_metrics": {
+    "scans_started_total": 45,
+    "scans_successful_total": 45,
+    "scans_failed_total": 0,
+    "reports_generated_total": 45
+  },
+  "ai_metrics": {
+    "ai_invocations_total": 120,
+    "ai_fallback_total": 2,
+    "ai_prompt_injection_blocks": 0
+  }
+}

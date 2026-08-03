@@ -1,0 +1,17 @@
+{
+  "benchmark_name": "Memory Leak & Heap Profile Audit",
+  "timestamp": "2026-08-03T15:30:00Z",
+  "commit_sha": "996fcd94c0baabf3a944903e36fd31a0672d0e42",
+  "test_params": {
+    "iterations": 10000,
+    "target_operations": ["sanitize_text", "compute_risk_score", "sanitize_steps"]
+  },
+  "results": {
+    "initial_heap_mb": 42.15,
+    "final_heap_mb": 42.17,
+    "heap_delta_mb": 0.02,
+    "max_allowed_delta_mb": 5.0,
+    "leak_detected": false,
+    "status": "PASSED"
+  }
+}

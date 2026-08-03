@@ -1,7 +1,12 @@
 from unittest.mock import MagicMock, patch
 from report.generator import PDFReportGenerator
 
-def test_report_generator_pdf_creation(sample_findings, tmp_path):
+@patch("report.generator.boto3.client")
+def test_report_generator_pdf_creation(mock_boto_client, sample_findings):
+    mock_s3 = MagicMock()
+    mock_s3.generate_presigned_url.return_value = "http://minio:9000/flawnetic/reports/sample.pdf"
+    mock_boto_client.return_value = mock_s3
+
     generator = PDFReportGenerator()
     target_url = "https://example.com"
     presigned = generator.generate_and_upload(
