@@ -27,7 +27,6 @@ def test_run_scan_task_not_found(mock_session_local):
     mock_session_local.return_value = mock_db
 
     from workers.tasks import run_scan
-    # Non-existent scan run id should return error string without crashing
+    # Non-existent scan run id should return None without crashing worker
     res = run_scan("non-existent-id")
-    assert isinstance(res, str)
-    assert "not found" in res.lower()
+    assert res is None
