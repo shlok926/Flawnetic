@@ -72,8 +72,7 @@ export default function App() {
   };
 
   return (
-    <div style={{ minHeight: '100vh', paddingBottom: '60px', position: 'relative' }}>
-      <div className="grain" />
+    <div style={{ minHeight: '100vh', paddingBottom: '60px' }}>
       <Navbar onNewScan={() => setIsModalOpen(true)} totalScans={1} />
 
       <main style={{ maxWidth: '1400px', margin: '0 auto', padding: '0 24px' }}>
