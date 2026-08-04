@@ -1,7 +1,7 @@
 import pytest
 from backend.engines.knowledge_graph.infrastructure.repositories.adapters import InMemoryKnowledgeProjectionRepository, LRUProjectionCache
-from backend.engines.knowledge_graph.infrastructure.event_handlers.rebuild import KnowledgeProjectionHandlers, ProjectionRebuildService, InMemoryReplayCursorStore
-from backend.engines.knowledge_graph.infrastructure.snapshot.snapshot import KnowledgeSnapshotEngine, SnapshotSignatureService
+from backend.engines.knowledge_graph.infrastructure.event_handlers.rebuild import KnowledgeProjectionHandlers, ProjectionRebuildService, InMemoryReplayCursorStore, InMemoryDistributedLock
+from backend.engines.knowledge_graph.infrastructure.snapshot.snapshot import KnowledgeSnapshotEngine, SnapshotSignatureService, IKeyProvider
 from backend.engines.knowledge_graph.domain.aggregates.graph import KnowledgeAssertion
 from backend.engines.knowledge_graph.domain.events.events import KnowledgeAssertionCreated
 from backend.engines.knowledge_graph.domain.value_objects.identity import AssertionId, DomainId, NodeId, ConfidenceMetrics, AssertionState, GraphId
@@ -47,9 +47,10 @@ async def test_replay_cursor_checkpointing():
     assertion_repo = MockAssertionRepo()
     projection_repo = InMemoryKnowledgeProjectionRepository(LRUProjectionCache())
     cursor_repo = InMemoryReplayCursorStore()
+    lock = InMemoryDistributedLock()
     
     handlers = KnowledgeProjectionHandlers(projection_repo, assertion_repo)
-    engine = ProjectionRebuildService(handlers, cursor_repo, checkpoint_interval=2)
+    engine = ProjectionRebuildService(handlers, cursor_repo, lock, checkpoint_interval=2)
     
     events = [
         KnowledgeAssertionCreated(event_id="e1", tenant_id="tenant-A", graph_id=GraphId(value="g1"), assertion_id=AssertionId(value="a1")),
@@ -68,13 +69,29 @@ async def test_replay_cursor_checkpointing():
     await engine.rebuild_from_events(events)
     assert len(engine.processed_event_ids) == 3
 
+class MockKeyProvider(IKeyProvider):
+    def __init__(self):
+        self.keys = {"v1": b"secret123", "v2": b"newsecret456"}
+        self.current = "v2"
+        
+    def get_current_key_version(self) -> str:
+        return self.current
+        
+    def get_key_material(self, version: str) -> bytes:
+        return self.keys.get(version)
+
 def test_snapshot_cryptographic_integrity():
-    sig_svc = SnapshotSignatureService("secret123")
+    key_prov = MockKeyProvider()
+    key_prov.current = "v1" # simulate old snapshot
+    sig_svc = SnapshotSignatureService(key_prov)
     engine = KnowledgeSnapshotEngine(sig_svc)
     
     snapshot_json = engine.generate_snapshot("g1", "tenant-A", "v1", [])
     
-    # Should load fine
+    # Switch active key to simulate rotation over time
+    key_prov.current = "v2"
+    
+    # Should load fine because it uses the key_version in the JSON to find v1
     payload = engine.load_snapshot(snapshot_json)
     assert payload["graph_id"] == "g1"
     
@@ -83,3 +100,41 @@ def test_snapshot_cryptographic_integrity():
     
     with pytest.raises(ValueError, match="Cryptographic signature mismatch"):
         engine.load_snapshot(tampered_json)
+
+def test_disabled_key_rejected():
+    key_prov = MockKeyProvider()
+    sig_svc = SnapshotSignatureService(key_prov)
+    engine = KnowledgeSnapshotEngine(sig_svc)
+    
+    snapshot_json = engine.generate_snapshot("g1", "tenant-A", "v1", [])
+    
+    # Delete the key material (simulate key disabled/revoked)
+    del key_prov.keys["v2"]
+    
+    with pytest.raises(ValueError, match="not found or disabled"):
+        engine.load_snapshot(snapshot_json)
+
+@pytest.mark.asyncio
+async def test_distributed_mutex_prevents_parallel_replay():
+    class MockAssertionRepo:
+        async def get_assertion(self, assertion_id, tenant_id):
+            return create_assertion(assertion_id.value, "TEST_REL")
+            
+    handlers = KnowledgeProjectionHandlers(InMemoryKnowledgeProjectionRepository(LRUProjectionCache()), MockAssertionRepo())
+    lock = InMemoryDistributedLock()
+    engine = ProjectionRebuildService(handlers, InMemoryReplayCursorStore(), lock)
+    
+    events = [KnowledgeAssertionCreated(event_id="e1", tenant_id="tenant-A", graph_id=GraphId(value="g1"), assertion_id=AssertionId(value="a1"))]
+    
+    # Acquire lock manually to simulate another pod holding it
+    lock.acquire("lock:replay:tenant-A")
+    
+    await engine.rebuild_from_events(events)
+    # Should exit early, so processed events is 0
+    assert len(engine.processed_event_ids) == 0
+    
+    # Release lock, now it should work
+    lock.release("lock:replay:tenant-A")
+    await engine.rebuild_from_events(events)
+    assert len(engine.processed_event_ids) == 1
+

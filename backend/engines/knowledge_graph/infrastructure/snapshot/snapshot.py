@@ -2,20 +2,35 @@ import hmac
 import hashlib
 import json
 import base64
-from typing import Dict, Any
+from typing import Dict, Any, Optional
+from abc import ABC, abstractmethod
+
+class IKeyProvider(ABC):
+    @abstractmethod
+    def get_current_key_version(self) -> str:
+        pass
+        
+    @abstractmethod
+    def get_key_material(self, version: str) -> Optional[bytes]:
+        pass
 
 class SnapshotSignatureService:
-    def __init__(self, secret_key: str):
-        self.secret = secret_key.encode('utf-8')
+    def __init__(self, key_provider: IKeyProvider):
+        self.key_provider = key_provider
         
-    def sign_payload(self, canonical_payload: bytes) -> str:
-        signature = hmac.new(self.secret, canonical_payload, hashlib.sha256).digest()
+    def sign_payload(self, canonical_payload: bytes, version: str) -> str:
+        secret = self.key_provider.get_key_material(version)
+        if not secret:
+            raise ValueError(f"Key version {version} not found or disabled.")
+        signature = hmac.new(secret, canonical_payload, hashlib.sha256).digest()
         return base64.b64encode(signature).decode('utf-8')
         
-    def verify_payload(self, canonical_payload: bytes, provided_signature: str) -> bool:
+    def verify_payload(self, canonical_payload: bytes, provided_signature: str, version: str) -> bool:
         try:
-            expected = self.sign_payload(canonical_payload)
+            expected = self.sign_payload(canonical_payload, version)
             return hmac.compare_digest(expected.encode('utf-8'), provided_signature.encode('utf-8'))
+        except ValueError:
+            raise
         except Exception:
             return False
 
@@ -35,12 +50,14 @@ class KnowledgeSnapshotEngine:
         }
         
         canonical = self._canonicalize(payload)
-        sig = self.signature_service.sign_payload(canonical)
+        key_version = self.signature_service.key_provider.get_current_key_version()
+        sig = self.signature_service.sign_payload(canonical, key_version)
         
         snapshot = {
             "payload": payload,
             "signature": sig,
-            "algorithm": "HMAC-SHA256"
+            "algorithm": "HMAC-SHA256",
+            "key_version": key_version
         }
         return json.dumps(snapshot)
         
@@ -48,10 +65,11 @@ class KnowledgeSnapshotEngine:
         snapshot = json.loads(snapshot_json)
         payload = snapshot['payload']
         sig = snapshot['signature']
+        key_version = snapshot.get('key_version', 'v1') # Fallback for legacy
         
         canonical = self._canonicalize(payload)
         
-        if not self.signature_service.verify_payload(canonical, sig):
+        if not self.signature_service.verify_payload(canonical, sig, key_version):
             raise ValueError("Cryptographic signature mismatch. Knowledge Graph Snapshot is corrupted or forged.")
             
         return payload
