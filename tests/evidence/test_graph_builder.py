@@ -1,45 +1,48 @@
 import pytest
 import uuid
 import hashlib
-from backend.engines.evidence.domain.services.graph_builder import EvidenceGraphBuilder
-from backend.engines.evidence.domain.services.repositories import IEvidenceRepository, IImmutableStorage
-from backend.engines.evidence.domain.aggregates.evidence import ImmutableEvidence
-from backend.engines.evidence.domain.value_objects.identity import EvidenceMetadata, ContentHash, EvidenceId, CorrelationId
+from backend.engines.evidence.domain.services.graph_builder import EvidenceGraphBuilder, CryptographicService
+from backend.engines.evidence.domain.services.repositories import ICommandEvidenceRepository, IImmutableStorage
+from backend.engines.evidence.domain.aggregates.evidence import ImmutableEvidence, EvidenceManifest
+from backend.engines.evidence.domain.value_objects.identity import EvidenceMetadata, ContentHash
 
-class MockEvidenceRepository(IEvidenceRepository):
+class MockCommandEvidenceRepository(ICommandEvidenceRepository):
     def __init__(self):
         self.store = {}
         
-    async def get_by_id(self, evidence_id: EvidenceId):
-        return self.store.get(evidence_id.value)
-        
-    async def get_by_correlation(self, correlation_id: CorrelationId):
-        return [e for e in self.store.values() if e.correlation_id == correlation_id]
-        
     async def save(self, evidence: ImmutableEvidence):
         self.store[evidence.evidence_id.value] = evidence
+        
+    async def save_manifest(self, manifest: EvidenceManifest):
+        pass
 
 class MockStorage(IImmutableStorage):
     def __init__(self):
         self.blobs = {}
         
-    async def write_bytes(self, content_hash: ContentHash, raw_bytes: bytes) -> str:
-        path = f"s3://mock-bucket/{content_hash.hash_value}"
+    async def write_bytes(self, content_hash: ContentHash, raw_bytes: bytes, tenant_id: str) -> str:
+        path = f"s3://mock-bucket-{tenant_id}/{content_hash.hash_value}"
         self.blobs[path] = raw_bytes
         return path
         
-    async def read_bytes(self, storage_path: str) -> bytes:
-        return self.blobs[storage_path]
+    async def read_bytes(self, storage_reference: str, tenant_id: str) -> bytes:
+        return self.blobs[storage_reference]
 
 @pytest.fixture
-def builder():
-    return EvidenceGraphBuilder(MockEvidenceRepository(), MockStorage())
+def crypto_service():
+    return CryptographicService(tenant_secret="test-secret-key-1234")
+
+@pytest.fixture
+def builder(crypto_service):
+    return EvidenceGraphBuilder(MockCommandEvidenceRepository(), MockStorage(), crypto_service)
 
 @pytest.mark.asyncio
-async def test_ingest_evidence_stores_immutable_blob_and_node(builder):
+async def test_ingest_evidence_with_signatures_and_storage(builder, crypto_service):
     app_id = str(uuid.uuid4())
+    tenant_id = "tenant-A"
     correlation_id = str(uuid.uuid4())
-    raw_payload = b"<html>Test Payload</html>"
+    logical_id_str = "logical-home-page-dom"
+    raw_payload = b"<html>Test Payload v3</html>"
     
     metadata = EvidenceMetadata(
         content_type="text/html",
@@ -48,16 +51,19 @@ async def test_ingest_evidence_stores_immutable_blob_and_node(builder):
         capture_engine="Playwright"
     )
     
-    evidence = await builder.ingest_evidence(app_id, correlation_id, raw_payload, metadata)
+    evidence = await builder.ingest_evidence(app_id, tenant_id, correlation_id, raw_payload, metadata, logical_id_str)
     
     # Verify hash identity
     expected_hash = hashlib.sha256(raw_payload).hexdigest()
     assert evidence.content_hash.hash_value == expected_hash
     
-    # Verify storage path
-    assert evidence.storage_path == f"s3://mock-bucket/{expected_hash}"
+    # Verify cryptographic signature
+    assert crypto_service.verify_signature(evidence.content_hash, evidence.content_signature) is True
+    assert evidence.content_signature.algorithm == "HMAC-SHA256"
     
-    # Verify DB save
-    saved = await builder.repo.get_by_id(evidence.evidence_id)
-    assert saved is not None
-    assert saved.metadata.content_type == "text/html"
+    # Verify decoupled identities
+    assert evidence.logical_evidence_id.value == logical_id_str
+    assert evidence.storage_reference == f"s3://mock-bucket-{tenant_id}/{expected_hash}"
+    
+    # Verify validation status
+    assert evidence.verification_status.status == "Valid"

@@ -6,6 +6,14 @@ class EvidenceId(BaseModel):
     model_config = ConfigDict(frozen=True)
     value: str
 
+class LogicalEvidenceId(BaseModel):
+    model_config = ConfigDict(frozen=True)
+    value: str
+
+class StorageObjectId(BaseModel):
+    model_config = ConfigDict(frozen=True)
+    value: str
+
 class ContentHash(BaseModel):
     model_config = ConfigDict(frozen=True)
     hash_value: str = Field(..., description="SHA-256 hash of the immutable raw content")
@@ -13,6 +21,15 @@ class ContentHash(BaseModel):
     @classmethod
     def generate(cls, raw_bytes: bytes) -> "ContentHash":
         return cls(hash_value=hashlib.sha256(raw_bytes).hexdigest())
+
+class ContentSignature(BaseModel):
+    model_config = ConfigDict(frozen=True)
+    signature: str = Field(..., description="Cryptographic signature of the ContentHash")
+    algorithm: Literal["HMAC-SHA256", "RSA", "ECDSA"] = "HMAC-SHA256"
+    
+class VerificationStatus(BaseModel):
+    model_config = ConfigDict(frozen=True)
+    status: Literal["Valid", "Invalid", "Tampered", "Unverified"] = "Unverified"
 
 class EvidenceMetadata(BaseModel):
     model_config = ConfigDict(frozen=True)
