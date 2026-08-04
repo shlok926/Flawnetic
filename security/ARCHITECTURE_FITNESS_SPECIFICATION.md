@@ -1,87 +1,92 @@
 # FLAWNETIC
 # ARCHITECTURE FITNESS SPECIFICATION (AFS)
-## Review ID: AFS-001
+## Review ID: AFS-002 (Enterprise Refinement)
 **Status:** ACTIVE
 
 This specification defines the automated gates, invariants, and metrics required to permanently protect the frozen Enterprise Architecture from regressions, technical debt, and domain bleed.
 
-Any commit violating these invariants MUST fail CI/CD. Exceptions require an approved Architectural Decision Record (ADR).
+Any commit violating these invariants MUST fail CI/CD based on the defined Rule Criticality Matrix. Exceptions require an approved Architectural Decision Record (ADR) and must be logged in the Architectural Debt Register.
 
 ---
 
-## 1. LAYER DEPENDENCY RULES (HEXAGONAL ARCHITECTURE)
-- **Why:** Protects business logic from framework and infrastructure changes.
-- **Verification:** `pytest-archon` automated AST analysis.
+## RULE CRITICALITY MATRIX
+| Level | Enforcement Policy | Merge Policy |
+| :--- | :--- | :--- |
+| **BLOCKER** | Halts CI immediately. Cannot be bypassed. | Merge Impossible |
+| **CRITICAL** | Fails CI. Requires ARB override. | Release Blocked |
+| **HIGH** | Emits warnings. Requires ADR to merge. | Warning until next release |
+| **MEDIUM** | Emits warnings. Logged in Debt Register. | Permitted (creates Debt) |
+| **LOW** | Informational metric tracking. | Permitted |
+
+## CI QUALITY LEVELS
+To optimize velocity, AFS checks execute in tiered pipelines:
+1. **Fast Checks (Pre-commit):** AST boundary parsing (`pytest-archon`), Immutability checks, Plugin validation.
+2. **Standard Checks (PR Level):** Unit tests, Repository Contract Tests, FSTR Validation.
+3. **Deep Architecture Scan (Nightly):** Dependency tree analysis, Performance Benchmarking, Memory Leak profiling.
+
+---
+
+## ARCHITECTURE INVARIANT REGISTRY
+
+### AFS-INV-001: Strict Layer Isolation (Hexagonal Architecture)
+- **Owner:** Architecture Team | **Severity:** BLOCKER
 - **Rule:** `domain` packages cannot import `infrastructure`, `presentation`, or external web frameworks.
-- **CI Enforcement:** Hard Fail on PR.
-- **Severity:** CRITICAL. No exceptions allowed.
+- **Verification:** `pytest-archon` automated AST analysis.
 
-## 2. DDD & AGGREGATE RULES
-- **Why:** Prevents monolithic data coupling and distributed deadlocks.
-- **Verification:** AST parsing enforcing that cross-aggregate references use IDs (e.g., `EvidenceId`), never object references.
-- **Rule:** A Bounded Context (e.g., `DigitalTwin`) cannot directly read/write tables of another Bounded Context (e.g., `State`).
-- **Runtime Enforcement:** Database schema separated by schemas/microservices.
-- **Severity:** CRITICAL.
+### AFS-INV-002: Cross-Aggregate Referencing
+- **Owner:** Architecture Team | **Severity:** BLOCKER
+- **Rule:** Aggregates cannot hold direct object references to other Aggregates (e.g., `DigitalTwin` cannot hold an instance of `ImmutableEvidence`, only `EvidenceId`).
+- **Verification:** AST typing parser.
 
-## 3. EVENT CONTRACT RULES
-- **Why:** Ensures Eventual Consistency pipelines don't break due to missing payloads.
-- **Verification:** Pydantic JSON Schema validation against an established Schema Registry.
-- **Rule:** Domain events must only make additive, backward-compatible schema changes. Breaking changes require a major version bump and dual-writing.
-- **CI Enforcement:** Fail if PR modifies existing Pydantic Event Models without `version` bump.
-- **Severity:** HIGH.
-
-## 4. CQRS RULES
-- **Why:** Read performance must not degrade Write availability.
-- **Verification:** AST static analysis checking interface implementation.
+### AFS-INV-003: CQRS Read/Write Isolation
+- **Owner:** Architecture Team | **Severity:** CRITICAL
 - **Rule:** The `Query` layer must never import or invoke `ICommandRepository`.
-- **Runtime Enforcement:** Read replicas use read-only database connections.
-- **Severity:** HIGH.
+- **Verification:** AST static analysis.
 
-## 5. AI GOVERNANCE RULES
-- **Why:** Prevents AI from hallucinating direct database mutations.
-- **Verification:** RBAC scopes and static analysis.
-- **Rule:** AI services are strictly provisioned with `Read-Only` credentials and can only emit `AIProposalEvents`.
-- **Runtime Enforcement:** Reject API writes lacking `Human_Verified` or `Admin` JWT claims.
-- **Severity:** CRITICAL.
+### AFS-INV-004: Zero-Trust AI Governance
+- **Owner:** Security/AI Team | **Severity:** BLOCKER
+- **Rule:** AI services are restricted to `Read-Only` credentials and can only emit `AIProposalEvents`. AI cannot mutate Domain state directly.
+- **Verification:** JWT Scope validation at API Gateway; RBAC static analysis.
 
-## 6. REPOSITORY RULES
-- **Why:** Storage providers must remain interchangeable.
-- **Verification:** `pytest-archon`.
-- **Rule:** `domain` services can only inject `IRepository` interfaces. Direct imports of `SQLAlchemy` or `boto3` inside domain are blocked.
-- **Severity:** HIGH.
+### AFS-INV-005: Event Bus Contract Compatibility
+- **Owner:** Platform Team | **Severity:** CRITICAL
+- **Rule:** Domain events must only make additive, backward-compatible schema changes. Ordering, Idempotency, and Exactly-Once Replay semantics must be maintained.
+- **Verification:** Pydantic JSON Schema diff validation.
 
-## 7. ADR COMPLIANCE RULES
-- **Why:** Prevents silent architectural drift.
-- **Verification:** Git Hook / CI Job.
-- **Rule:** If a PR modifies any file in `domain/aggregates` or alters the `ARCHITECTURE_FITNESS_SPECIFICATION.md`, it requires a referenced `ADR-XXX` in the PR description.
-- **Severity:** MEDIUM (Requires manual PR block override).
+### AFS-INV-006: Stateless Plugin Compliance
+- **Owner:** Platform Team | **Severity:** CRITICAL
+- **Rule:** Every Discovery Plugin MUST be perfectly stateless, declare capabilities/permissions, and return canonical Domain Entities.
+- **Verification:** Plugin Contract Test Suite.
 
-## 8. SECURITY RULES
-- **Why:** Prevents cross-tenant data leaks and tampering.
-- **Verification:** SAST tools (Bandit/Semgrep) and Unit Tests.
-- **Rule:** Every Graph/DB read query MUST include `tenant_id`. Every payload saved MUST be hashed.
-- **Runtime Enforcement:** Row-Level Security (RLS) active on all PostgreSQL databases.
-- **Severity:** CRITICAL.
+### AFS-INV-007: Mandatory Tenant Isolation
+- **Owner:** Security Team | **Severity:** BLOCKER
+- **Rule:** Every Graph/DB read query MUST explicitly pass `tenant_id`.
+- **Verification:** SAST tools (Bandit/Semgrep) preventing omitted `tenant_id` kwargs in Repository interfaces.
 
-## 9. PERFORMANCE BUDGETS
-- **Why:** Ensures the twin can scale to 100M+ nodes.
-- **Verification:** Benchmark CI pipeline (`pytest-benchmark`).
-- **Rule:** Domain Logic processing time < 50ms per state.
-- **CI Enforcement:** Fail if performance degrades by > 10% vs `main` branch baseline.
-- **Severity:** HIGH.
+### AFS-INV-008: Immutable Entity Constraint
+- **Owner:** Architecture Team | **Severity:** CRITICAL
+- **Rule:** All Domain Entities and Value Objects MUST enforce immutability (`ConfigDict(frozen=True)`).
+- **Verification:** Python Reflection/AST checking base classes.
 
-## 10. ARCHITECTURE METRICS (OBSERVABILITY)
-- **Why:** Detects architectural decay over time.
-- **Metrics Tracked:** `Cyclomatic Complexity`, `Coupling Index`, `Orphaned Evidence Count`, `Unprocessed Event Queue Size`.
-- **Runtime Enforcement:** Prometheous/Grafana alerts trigger if thresholds exceeded.
+---
 
-## 11. AUTOMATED FITNESS TESTS (CI/CD GATES)
-Every PR triggers the **Fitness Pipeline**:
-1. **Static Architecture Analysis (`pytest-archon`)**: Verifies boundaries.
-2. **Immutability Check**: Asserts all Aggregate models have `frozen=True`.
-3. **Repository Contract Tests**: Runs the same test suite against `InMemoryRepo` and `PostgresRepo` to ensure identical behavior.
-4. **Performance Gate**: Executes benchmark regression testing.
-5. **Security Gate**: Bandit/Semgrep check for manual Cypher/SQL queries bypassing the TQL AST.
+## ARCHITECTURAL DEBT REGISTER
+Violations of `MEDIUM` severity, or ARB-approved overrides for `HIGH/CRITICAL` rules, are not silently ignored. They are registered in the codebase:
+- `architecture/debt/ADR_PENDING.md`
+- `architecture/debt/KNOWN_EXCEPTIONS.md`
 
-## EXCEPTION POLICY
-Only the Architecture Review Board (ARB) can approve an ADR that intentionally violates an AFS rule. If approved, the AFS rule must be explicitly updated to reflect the new Enterprise baseline.
+## RUNTIME DRIFT DETECTION
+Static checks alone cannot guarantee architecture. EBPF or APM tracing (OpenTelemetry) will trigger Alerts if:
+- *Service A bypasses the repository layer and executes SQL directly.*
+- *Event stream ordering invariants are violated at runtime.*
+
+## RULE EVOLUTION POLICY
+AFS invariants evolve over time. Changes are managed via states:
+- `PROPOSED`: In testing phase (emits warnings).
+- `ACTIVE`: Fully enforced in CI.
+- `DEPRECATED`: Replaced by a new invariant.
+- `REMOVED`: No longer enforced.
+
+## CERTIFICATION TRACEABILITY
+To make Release Certification auditable, every Certification Report MUST explicitly trace its lineage:
+`Certification -> [AFS-INV-00X] -> [ADR-00X] -> [FSTR-00X] -> [PERF-00X]`
